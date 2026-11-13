@@ -1,0 +1,173 @@
+/* Scoped Styling for SAAED Premium Corporate Navy Top Navigation Bar */
+
+.topbarRoot {
+  position: relative;
+  z-index: 40;
+  width: 100%;
+  color: #ffffff;
+  background: linear-gradient(
+    90deg,
+    #03142e 0%,
+    #06234e 22%,
+    #08316b 50%,
+    #062554 78%,
+    #031633 100%
+  );
+  box-shadow:
+    0 4px 16px -4px rgba(3, 18, 44, 0.45),
+    inset 0 1px 0 rgba(147, 197, 253, 0.14);
+}
+
+/* Decorative background layers clipped safely without clipping dropdown menus */
+.backdropClip {
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  z-index: 0;
+}
+
+.corporateWavesSvg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+/* Subtle sapphire halo behind transparent SAAED logo so crimson/blue marks pop cleanly */
+.logoAmbientGlow {
+  pointer-events: none;
+  position: absolute;
+  top: -18px;
+  right: -24px;
+  width: 310px;
+  height: 92px;
+  background: radial-gradient(
+    ellipse 70% 70% at 55% 52%,
+    rgba(29, 98, 196, 0.24) 0%,
+    rgba(14, 65, 138, 0.12) 48%,
+    transparent 76%
+  );
+}
+
+/* Luminous Bottom Blue Corporate Line */
+.bottomGlowLine {
+  pointer-events: none;
+  position: absolute;
+  inset-inline: 0;
+  bottom: 0;
+  z-index: 20;
+  height: 2px;
+  background: linear-gradient(
+    90deg,
+    rgba(14, 165, 233, 0.4) 0%,
+    rgba(56, 189, 248, 0.92) 28%,
+    rgba(96, 165, 250, 0.95) 52%,
+    rgba(56, 189, 248, 0.9) 76%,
+    rgba(14, 165, 233, 0.4) 100%
+  );
+  box-shadow:
+    0 1px 8px rgba(56, 189, 248, 0.55),
+    0 0 14px rgba(14, 165, 233, 0.32);
+}
+
+/* Vertical Thin Corporate Divider */
+.verticalDivider {
+  width: 1px;
+  height: 1.75rem;
+  flex-shrink: 0;
+  background: linear-gradient(
+    180deg,
+    transparent 0%,
+    rgba(56, 189, 248, 0.42) 50%,
+    transparent 100%
+  );
+}
+
+/* White Pill Filter Controls */
+.filterPill {
+  display: inline-flex;
+  align-items: center;
+  height: 2.125rem;
+  border-radius: 9999px;
+  background-color: #ffffff;
+  color: #0a2c52;
+  border: 1px solid rgba(255, 255, 255, 0.88);
+  box-shadow:
+    0 2px 8px rgba(3, 18, 44, 0.34),
+    inset 0 1px 0 rgba(255, 255, 255, 0.95);
+  transition:
+    box-shadow 150ms cubic-bezier(0.16, 1, 0.3, 1),
+    transform 150ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.filterPill:focus-within {
+  box-shadow:
+    0 0 0 2px rgba(56, 189, 248, 0.7),
+    0 2px 10px rgba(3, 18, 44, 0.4);
+}
+
+/* Dark Navy Glowing Export PDF Pill */
+.pdfPillBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  height: 2.125rem;
+  border-radius: 9999px;
+  padding-inline: 1rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: #ffffff;
+  white-space: nowrap;
+  flex-shrink: 0;
+  background: linear-gradient(180deg, rgba(11, 52, 108, 0.92) 0%, rgba(6, 33, 73, 0.96) 100%);
+  border: 1px solid rgba(56, 189, 248, 0.65);
+  box-shadow:
+    0 0 12px rgba(14, 165, 233, 0.28),
+    inset 0 1px 0 rgba(186, 230, 253, 0.22);
+  transition:
+    background-color 150ms ease,
+    border-color 150ms ease,
+    box-shadow 150ms ease;
+}
+
+.pdfPillBtn:hover {
+  background: linear-gradient(180deg, rgba(16, 70, 142, 0.96) 0%, rgba(8, 43, 94, 0.98) 100%);
+  border-color: rgba(125, 211, 252, 0.9);
+  box-shadow:
+    0 0 16px rgba(56, 189, 248, 0.42),
+    inset 0 1px 0 rgba(186, 230, 253, 0.32);
+}
+
+/* Circular Glass-Navy Control Button (Bell & Avatar Ring) */
+.circleIconBtn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  flex-shrink: 0;
+  border-radius: 9999px;
+  border: 1px solid rgba(147, 197, 253, 0.34);
+  background: radial-gradient(
+    circle at 35% 30%,
+    rgba(22, 74, 146, 0.55) 0%,
+    rgba(7, 32, 72, 0.78) 100%
+  );
+  box-shadow:
+    0 0 10px rgba(56, 189, 248, 0.14),
+    inset 0 1px 0 rgba(219, 234, 254, 0.18);
+  transition:
+    border-color 150ms ease,
+    background-color 150ms ease,
+    box-shadow 150ms ease;
+}
+
+.circleIconBtn:hover {
+  border-color: rgba(125, 211, 252, 0.68);
+  box-shadow:
+    0 0 14px rgba(56, 189, 248, 0.26),
+    inset 0 1px 0 rgba(219, 234, 254, 0.28);
+}
