@@ -1,5 +1,6 @@
 import * as XLSX from 'xlsx';
-import { SystemSettings, Vehicle, VehicleStatus } from '../types';
+import { Auction, SystemSettings, Vehicle, VehicleStatus } from '../types';
+import { resolveVehicleAuction } from './auctionLink';
 import { generateSafeId } from './uaeDate';
 
 export interface ParsedVehicleImportRow {
@@ -172,29 +173,39 @@ export function downloadVehiclesTemplateXlsx() {
 export function exportVehiclesToXlsx(
   vehicles: Vehicle[],
   filename: string,
-  isDemoMode = false
+  isDemoMode = false,
+  auctionsById?: ReadonlyMap<string, Auction>
 ) {
-  const rows = vehicles.map((v, index) => ({
-    'م': index + 1,
-    'بيئة البيانات': isDemoMode || v.isDemo ? 'بيانات تجريبية (Demo – ليست فعلية)' : 'إنتاج فعلي',
-    'رقم اللوت': v.lotNumber,
-    'نوع المركبة': v.make,
-    'الطراز': v.model,
-    'سنة الصنع': v.modelYear,
-    'رقم الشاصي': v.vin || '',
-    'الموقع': v.location,
-    'الشهر': v.month,
-    'السنة': v.year,
-    'القيمة التقديرية (AED)': v.estimatedValue,
-    'سعر البيع (AED)': v.salePrice,
-    'المبلغ المحصل (AED)': v.collectedAmount,
-    'الحالة': v.status === 'sold' ? 'مبيعة' : v.status === 'pending' ? 'قيد التحصيل' : 'غير مبيعة',
-    'رسوم المنصة (AED)': v.platformFee,
-    'الرسوم الإدارية (AED)': v.adminFee,
-    'رسوم الفوركلفت (AED)': v.forkliftFee,
-    'رسوم النقل ريكفري (AED)': v.recoveryFee,
-    'المشتري': v.buyerName || '',
-  }));
+  const rows = vehicles.map((v, index) => {
+    const auctionName = auctionsById
+      ? resolveVehicleAuction(v, auctionsById).label
+      : v.auctionId && v.auctionId.trim() && v.auctionId !== 'general_auction'
+        ? v.auctionId
+        : 'غير مرتبط بمزاد';
+
+    return {
+      'م': index + 1,
+      'بيئة البيانات': isDemoMode || v.isDemo ? 'بيانات تجريبية (Demo – ليست فعلية)' : 'إنتاج فعلي',
+      'رقم اللوت': v.lotNumber,
+      'اسم المزاد': auctionName,
+      'نوع المركبة': v.make,
+      'الطراز': v.model,
+      'سنة الصنع': v.modelYear,
+      'رقم الشاصي': v.vin || '',
+      'الموقع': v.location,
+      'الشهر': v.month,
+      'السنة': v.year,
+      'القيمة التقديرية (AED)': v.estimatedValue,
+      'سعر البيع (AED)': v.salePrice,
+      'المبلغ المحصل (AED)': v.collectedAmount,
+      'الحالة': v.status === 'sold' ? 'مبيعة' : v.status === 'pending' ? 'قيد التحصيل' : 'غير مبيعة',
+      'رسوم المنصة (AED)': v.platformFee,
+      'الرسوم الإدارية (AED)': v.adminFee,
+      'رسوم الفوركلفت (AED)': v.forkliftFee,
+      'رسوم النقل ريكفري (AED)': v.recoveryFee,
+      'المشتري': v.buyerName || '',
+    };
+  });
   const ws = XLSX.utils.json_to_sheet(rows);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, isDemoMode ? 'تقرير المركبات (تجريبي)' : 'تقرير المركبات');

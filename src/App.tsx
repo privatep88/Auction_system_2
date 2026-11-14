@@ -763,6 +763,7 @@ function AppWorkspace({ auctionData }: { auctionData: ReturnType<typeof useAucti
             {activeTab === 'vehicles' && (
               <VehiclesLedgerView
                 vehicles={filteredVehicles}
+                auctions={auctions}
                 filter={filter}
                 canEdit={canEdit}
                 isDemoMode={isDemoMode}

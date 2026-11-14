@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   AlertCircle,
@@ -55,6 +55,7 @@ import {
   ServiceFeeRecord,
   Vehicle,
 } from '../../types';
+import { buildAuctionLookupMap, resolveVehicleAuction } from '../../utils/auctionLink';
 import { exportVehiclesToXlsx } from '../../utils/excelCsv';
 import { ARABIC_MONTHS, formatAED, formatNumber, formatPercent, getMonthLabel } from '../../utils/uaeDate';
 import { AuctionFinancialReportBanner } from '../AuctionFinancialReportBanner';
@@ -1033,6 +1034,7 @@ export const AuctionsRegistryView: React.FC<AuctionsRegistryViewProps> = ({
 ============================================================================ */
 interface VehiclesLedgerViewProps {
   vehicles: Vehicle[];
+  auctions: Auction[];
   filter: FilterState;
   canEdit: boolean;
   isDemoMode?: boolean;
@@ -1046,6 +1048,7 @@ const PAGE_SIZE = 50;
 
 export const VehiclesLedgerView: React.FC<VehiclesLedgerViewProps> = ({
   vehicles,
+  auctions,
   filter,
   canEdit,
   isDemoMode = false,
@@ -1058,19 +1061,52 @@ export const VehiclesLedgerView: React.FC<VehiclesLedgerViewProps> = ({
   const [page, setPage] = useState(1);
   const [headerThumbFailed, setHeaderThumbFailed] = useState(false);
 
+  const auctionsById = useMemo(() => buildAuctionLookupMap(auctions), [auctions]);
+
+  const anomalySummary = useMemo(() => {
+    let unlinkedCount = 0;
+    let unavailableCount = 0;
+    for (const v of vehicles) {
+      const linkInfo = resolveVehicleAuction(v, auctionsById);
+      if (linkInfo.status === 'unlinked') unlinkedCount += 1;
+      else if (linkInfo.status === 'unavailable') unavailableCount += 1;
+    }
+    return { unlinkedCount, unavailableCount };
+  }, [vehicles, auctionsById]);
+
+  const lastAnomalySigRef = useRef('');
+  useEffect(() => {
+    const totalAnomalies = anomalySummary.unlinkedCount + anomalySummary.unavailableCount;
+    if (totalAnomalies === 0) {
+      lastAnomalySigRef.current = '';
+      return;
+    }
+    const sig = `${anomalySummary.unlinkedCount}:${anomalySummary.unavailableCount}`;
+    if (lastAnomalySigRef.current !== sig) {
+      lastAnomalySigRef.current = sig;
+      console.info(
+        `[SAAED Audit] سجل المركبات: ${anomalySummary.unlinkedCount} غير مرتبط بمزاد، ${anomalySummary.unavailableCount} مرتبط بمزاد غير متاح.`
+      );
+    }
+  }, [anomalySummary]);
+
   const visible = useMemo(() => {
     const q = searchTerm.trim().toLowerCase();
     if (!q) return vehicles;
-    return vehicles.filter(
-      (v) =>
+    return vehicles.filter((v) => {
+      const auctionInfo = resolveVehicleAuction(v, auctionsById);
+      return (
         v.id.toLowerCase().includes(q) ||
         v.lotNumber.toLowerCase().includes(q) ||
+        auctionInfo.label.toLowerCase().includes(q) ||
+        (auctionInfo.auctionCode || '').toLowerCase().includes(q) ||
         v.make.toLowerCase().includes(q) ||
         v.model.toLowerCase().includes(q) ||
         (v.vin || '').toLowerCase().includes(q) ||
         (v.buyerName || '').toLowerCase().includes(q)
-    );
-  }, [vehicles, searchTerm]);
+      );
+    });
+  }, [vehicles, searchTerm, auctionsById]);
 
   const inventoryBreakdown = useMemo(() => {
     let soldCount = 0;
@@ -1133,8 +1169,8 @@ export const VehiclesLedgerView: React.FC<VehiclesLedgerViewProps> = ({
                 setSearchTerm(e.target.value);
                 setPage(1);
               }}
-              placeholder="بحث بالمعرف / اللوت / النوع / الشاصي..."
-              className="w-60 rounded-lg border border-slate-300 bg-white py-1.5 pr-8 pl-3 text-xs font-semibold focus:border-[#0B4F93] focus:outline-none"
+              placeholder="بحث بالمعرف / اللوت / اسم المزاد / النوع..."
+              className="w-64 rounded-lg border border-slate-300 bg-white py-1.5 pr-8 pl-3 text-xs font-semibold focus:border-[#0B4F93] focus:outline-none"
             />
           </div>
 
@@ -1145,7 +1181,8 @@ export const VehiclesLedgerView: React.FC<VehiclesLedgerViewProps> = ({
               exportVehiclesToXlsx(
                 visible,
                 `SAAED_Vehicles_${filter.year}_${filter.month}`,
-                isDemoMode
+                isDemoMode,
+                auctionsById
               )
             }
             className="flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-800 hover:bg-slate-50 disabled:opacity-50"
@@ -1188,10 +1225,11 @@ export const VehiclesLedgerView: React.FC<VehiclesLedgerViewProps> = ({
       {/* Enhanced High-Performance Vehicle Inventory Table (All Columns Preserved) */}
       <div className="saaed-card overflow-hidden rounded-xl">
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[1040px] text-right text-xs">
+          <table className="w-full min-w-[1220px] text-right text-xs">
             <thead>
               <tr className="saaed-card-header whitespace-nowrap text-white">
                 <th className="px-3 py-3 font-extrabold">المعرف / اللوت</th>
+                <th className="px-3 py-3 font-extrabold">اسم المزاد</th>
                 <th className="px-3 py-3 font-extrabold">المركبة والطراز</th>
                 <th className="px-3 py-3 font-extrabold">سنة الصنع</th>
                 <th className="px-3 py-3 font-extrabold">الساحة</th>
@@ -1207,7 +1245,7 @@ export const VehiclesLedgerView: React.FC<VehiclesLedgerViewProps> = ({
             <tbody className="divide-y divide-slate-200/85">
               {pageItems.length === 0 ? (
                 <tr className="bg-white">
-                  <td colSpan={canEdit ? 11 : 10} className="py-10 text-center text-xs font-semibold text-slate-400">
+                  <td colSpan={canEdit ? 12 : 11} className="py-10 text-center text-xs font-semibold text-slate-400">
                     لا توجد مركبات مطابقة للبحث أو الفترة المحددة.
                   </td>
                 </tr>
@@ -1217,6 +1255,7 @@ export const VehiclesLedgerView: React.FC<VehiclesLedgerViewProps> = ({
                   const exceededEstimate =
                     v.status === 'sold' && v.estimatedValue > 0 && v.salePrice > v.estimatedValue;
                   const rowStripe = idx % 2 === 0 ? 'bg-white' : 'bg-[#f5f9fe]';
+                  const auctionInfo = resolveVehicleAuction(v, auctionsById);
 
                   return (
                     <tr key={v.id} className={`transition-colors hover:bg-blue-50/75 ${rowStripe}`}>
@@ -1227,6 +1266,21 @@ export const VehiclesLedgerView: React.FC<VehiclesLedgerViewProps> = ({
                         <div className="font-mono-num tabular-nums text-[10px] text-slate-500">
                           {v.id}
                         </div>
+                      </td>
+                      <td className="max-w-[230px] px-3 py-2.5">
+                        <span
+                          title={auctionInfo.label}
+                          tabIndex={0}
+                          className={`block w-full truncate rounded text-xs focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0B4F93]/50 ${
+                            auctionInfo.status === 'linked'
+                              ? 'font-bold text-[#0A2C52]'
+                              : auctionInfo.status === 'unlinked'
+                                ? 'font-semibold text-slate-500'
+                                : 'font-semibold text-amber-700'
+                          }`}
+                        >
+                          {auctionInfo.label}
+                        </span>
                       </td>
                       <td className="px-3 py-2.5">
                         <div className="font-bold text-slate-900">
