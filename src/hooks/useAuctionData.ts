@@ -207,7 +207,20 @@ export function useAuctionData() {
   const [cloudSettings, setCloudSettings] = useState<SystemSettings | null>(null);
 
   useEffect(() => {
-    testFirestoreConnection().then(setFirebaseOnline);
+    let mounted = true;
+    const syncConnection = () => {
+      testFirestoreConnection().then((ok) => {
+        if (mounted) setFirebaseOnline(ok);
+      });
+    };
+    const handleOffline = () => {
+      if (mounted) setFirebaseOnline(false);
+    };
+
+    syncConnection();
+    window.addEventListener('online', syncConnection);
+    window.addEventListener('offline', handleOffline);
+
     const unsub = onAuthStateChanged(auth, async (fbUser) => {
       setUser(fbUser);
       setAuthReady(true);
@@ -238,7 +251,12 @@ export function useAuctionData() {
         setUserProfile(null);
       }
     });
-    return () => unsub();
+    return () => {
+      mounted = false;
+      window.removeEventListener('online', syncConnection);
+      window.removeEventListener('offline', handleOffline);
+      unsub();
+    };
   }, []);
 
   // Real-time Firestore listeners when authenticated (Production workspace)

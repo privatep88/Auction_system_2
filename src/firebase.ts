@@ -1,6 +1,12 @@
-import { initializeApp, type FirebaseOptions } from 'firebase/app';
+import { getApp, getApps, initializeApp, type FirebaseOptions } from 'firebase/app';
 import { getAuth, GoogleAuthProvider } from 'firebase/auth';
-import { doc, getDocFromServer, getFirestore } from 'firebase/firestore';
+import {
+  doc,
+  getDocFromServer,
+  getFirestore,
+  initializeFirestore,
+  type Firestore,
+} from 'firebase/firestore';
 
 interface FirebaseAppletConfig extends FirebaseOptions {
   firestoreDatabaseId?: string;
@@ -91,10 +97,24 @@ const firebaseConfig: FirebaseAppletConfig = {
   ...(resolvedMeasurementId ? { measurementId: resolvedMeasurementId } : {}),
 };
 
-const app = initializeApp(firebaseConfig);
-export const db = firebaseConfig.firestoreDatabaseId
-  ? getFirestore(app, firebaseConfig.firestoreDatabaseId)
-  : getFirestore(app);
+const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
+
+let dbInstance: Firestore;
+try {
+  // Force HTTPS long-polling instead of WebChannel streaming so Cloud Firestore
+  // responds reliably without 10-second backend timeout errors behind proxies/iframes.
+  dbInstance = initializeFirestore(
+    app,
+    { experimentalForceLongPolling: true },
+    firebaseConfig.firestoreDatabaseId || undefined
+  );
+} catch {
+  dbInstance = firebaseConfig.firestoreDatabaseId
+    ? getFirestore(app, firebaseConfig.firestoreDatabaseId)
+    : getFirestore(app);
+}
+
+export const db = dbInstance;
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({ prompt: 'select_account' });
@@ -152,14 +172,39 @@ export function handleFirestoreError(
 }
 
 export async function testFirestoreConnection(): Promise<boolean> {
+  if (!firebaseConfig.apiKey || !firebaseConfig.projectId) {
+    console.error('Please check your Firebase configuration.');
+    return false;
+  }
+
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+    return false;
+  }
+
   try {
     await getDocFromServer(doc(db, 'test', 'connection'));
     return true;
   } catch (error) {
-    if (error instanceof Error && error.message.includes('the client is offline')) {
-      console.error('Please check your Firebase configuration.');
+    const code =
+      typeof error === 'object' && error !== null && 'code' in error
+        ? String((error as { code?: unknown }).code)
+        : '';
+    const msg = error instanceof Error ? error.message : String(error || '');
+
+    // permission-denied proves Cloud Firestore backend responded over the network
+    if (code === 'permission-denied' || msg.includes('Missing or insufficient permissions')) {
+      return true;
+    }
+
+    if (
+      code === 'unavailable' ||
+      msg.includes('the client is offline') ||
+      msg.includes('Failed to get document')
+    ) {
+      console.warn('Firestore backend temporarily unreachable; local/demo workspace remains active.');
       return false;
     }
+
     return true;
   }
 }
