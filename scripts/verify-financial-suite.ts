@@ -1,6 +1,6 @@
 import type { SystemSettings } from '../src/types';
 import { buildAuctionLookupMap, resolveVehicleAuction } from '../src/utils/auctionLink';
-import { computeMonthlyTrend, filterVehicles } from '../src/utils/calculations';
+import { computeMonthlyTrend, filterCollections, filterVehicles } from '../src/utils/calculations';
 import {
   generateDemoDataset,
   runFinancialValidationSuite,
@@ -152,9 +152,81 @@ if (!novSoldSample || !dateValidationOk) {
   }
 }
 
+// T15: Payment date editing & financial invariance verification
+const targetPaymentSample = dataset.collections.find(
+  (c) => c.year === 2026 && c.month === 11 && !c.vehicleId
+) || dataset.collections.find((c) => c.year === 2026 && c.month === 11);
+
+if (!targetPaymentSample) {
+  failedCount += 1;
+  console.error('[FAIL] T15: No November 2026 collection record found for payment date test.');
+} else {
+  const newPaymentDate = '2026-10-19';
+  const parsedPayDate = parseIsoDateParts(newPaymentDate)!;
+  const modifiedCollections = dataset.collections.map((c) =>
+    c.id === targetPaymentSample.id
+      ? {
+          ...c,
+          collectionDate: newPaymentDate,
+          year: parsedPayDate.year,
+          month: parsedPayDate.month,
+        }
+      : c
+  );
+
+  const octCollectionsBefore = filterCollections(
+    dataset.collections,
+    { month: 10, year: 2026, location: 'all', auctionId: 'all', status: 'all' },
+    dataset.vehicles
+  );
+  const octCollectionsAfter = filterCollections(
+    modifiedCollections,
+    { month: 10, year: 2026, location: 'all', auctionId: 'all', status: 'all' },
+    dataset.vehicles
+  );
+  const novCollectionsBefore = filterCollections(
+    dataset.collections,
+    { month: 11, year: 2026, location: 'all', auctionId: 'all', status: 'all' },
+    dataset.vehicles
+  );
+  const novCollectionsAfter = filterCollections(
+    modifiedCollections,
+    { month: 11, year: 2026, location: 'all', auctionId: 'all', status: 'all' },
+    dataset.vehicles
+  );
+
+  const updatedCol = modifiedCollections.find((c) => c.id === targetPaymentSample.id)!;
+  const fieldsPreserved =
+    updatedCol.amount === targetPaymentSample.amount &&
+    updatedCol.amountDue === targetPaymentSample.amountDue &&
+    updatedCol.remainingAmount === targetPaymentSample.remainingAmount &&
+    updatedCol.paymentStatus === targetPaymentSample.paymentStatus &&
+    updatedCol.collectionType === targetPaymentSample.collectionType &&
+    updatedCol.vehicleId === targetPaymentSample.vehicleId;
+
+  const totalCollectedSumBefore = dataset.collections.reduce((s, c) => s + c.amount, 0);
+  const totalCollectedSumAfter = modifiedCollections.reduce((s, c) => s + c.amount, 0);
+
+  if (
+    fieldsPreserved &&
+    totalCollectedSumBefore === totalCollectedSumAfter &&
+    octCollectionsAfter.some((c) => c.id === targetPaymentSample.id) &&
+    !octCollectionsBefore.some((c) => c.id === targetPaymentSample.id) &&
+    novCollectionsBefore.some((c) => c.id === targetPaymentSample.id) &&
+    !novCollectionsAfter.some((c) => c.id === targetPaymentSample.id)
+  ) {
+    console.log(
+      `[PASS] T15: التحقق من تعديل تاريخ الدفع في سجل التحصيلات والمزامنة الزمنية دون المساس بالمبالغ أو حالة السداد`
+    );
+  } else {
+    failedCount += 1;
+    console.error('[FAIL] T15: Payment date edit synchronization or amount invariance failed.');
+  }
+}
+
 if (failedCount > 0) {
   console.error(`\nFinancial validation failed: ${failedCount} test(s) did not pass.`);
   process.exit(1);
 }
 
-console.log(`\nAll ${results.length + 2} financial & operational integrity tests passed.`);
+console.log(`\nAll ${results.length + 3} financial & operational integrity tests passed.`);

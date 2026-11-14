@@ -1326,6 +1326,91 @@ export function useAuctionData() {
     [addAuditEntry, canEdit, isCloudMode, isDemoMode, updateDemoStore, updateLocalStore, user, vehicles]
   );
 
+  const updateCollectionDate = useCallback(
+    async (collectionId: string, newCollectionDate: string): Promise<CollectionRecord> => {
+      if (!canEdit) {
+        throw new Error('ليس لديك صلاحية تعديل تاريخ الدفع حسب مستوى الصلاحية الحالي.');
+      }
+      const parsed = parseIsoDateParts(newCollectionDate);
+      if (!parsed) {
+        throw new Error('تاريخ الدفع غير صالح. يجب إدخال تاريخ صحيح بصيغة YYYY-MM-DD.');
+      }
+      const normalizedDate = formatIsoDateParts(parsed.year, parsed.month, parsed.day);
+      const target = collections.find((c) => c.id === collectionId);
+      if (!target) {
+        throw new Error('تعذر العثور على سجل عملية التحصيل المحددة لتحديث تاريخ الدفع.');
+      }
+
+      const previousDate = target.collectionDate || 'غير محدد';
+      let updatedRecord: CollectionRecord = {
+        ...target,
+        collectionDate: normalizedDate,
+        year: parsed.year,
+        month: parsed.month,
+      };
+
+      if (isDemoMode || !isCloudMode) {
+        const nowIso = new Date().toISOString();
+        updatedRecord = {
+          ...updatedRecord,
+          updatedAt: nowIso,
+        };
+        const applyDateUpdate = <T extends { collections: CollectionRecord[] }>(prev: T): T => ({
+          ...prev,
+          collections: prev.collections.map((c) =>
+            c.id === collectionId
+              ? {
+                  ...c,
+                  collectionDate: normalizedDate,
+                  year: parsed.year,
+                  month: parsed.month,
+                  updatedAt: nowIso,
+                }
+              : c
+          ),
+        });
+        if (isDemoMode) {
+          updateDemoStore((prev) => applyDateUpdate(prev));
+        } else {
+          updateLocalStore((prev) => applyDateUpdate(prev));
+        }
+      } else if (isCloudMode && user) {
+        const ref = doc(db, 'collections', collectionId);
+        try {
+          await updateDoc(ref, {
+            collectionDate: normalizedDate,
+            year: parsed.year,
+            month: parsed.month,
+            updatedAt: serverTimestamp(),
+          });
+          const verifiedSnap = await getDocFromServer(ref).catch(() => getDoc(ref));
+          if (!verifiedSnap.exists()) {
+            throw new Error('تعذر التحقق من سجل التحصيل بعد تحديث تاريخ الدفع في قاعدة البيانات.');
+          }
+          const serverData = verifiedSnap.data() as CollectionRecord;
+          if (serverData.collectionDate !== normalizedDate) {
+            throw new Error('لم تتطابق القيمة المحفوظة في قاعدة البيانات مع تاريخ الدفع الجديد.');
+          }
+          updatedRecord = serverData;
+        } catch (err) {
+          handleFirestoreError(err, OperationType.UPDATE, `collections/${collectionId}`);
+        }
+      }
+
+      await addAuditEntry(
+        'collection',
+        collectionId,
+        'تعديل تاريخ الدفع',
+        `تعديل تاريخ الدفع لعملية التحصيل ${target.receiptNo} (${target.bidderName}) من ${previousDate} إلى ${normalizedDate}`,
+        parsed.year,
+        parsed.month
+      );
+
+      return updatedRecord;
+    },
+    [addAuditEntry, canEdit, collections, isCloudMode, isDemoMode, updateDemoStore, updateLocalStore, user]
+  );
+
   const deleteCollection = useCallback(
     async (record: CollectionRecord) => {
       if (!canEdit) throw new Error('ليس لديك صلاحية حذف التحصيلات');
@@ -1845,6 +1930,7 @@ export function useAuctionData() {
     bulkImportVehicles,
     deleteVehicle,
     saveCollection,
+    updateCollectionDate,
     deleteCollection,
     saveServiceRecord,
     deleteServiceRecord,

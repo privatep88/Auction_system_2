@@ -96,6 +96,7 @@ function AppWorkspace({ auctionData }: { auctionData: ReturnType<typeof useAucti
     bulkImportVehicles,
     deleteVehicle,
     saveCollection,
+    updateCollectionDate,
     deleteCollection,
     saveServiceRecord,
     deleteServiceRecord,
@@ -791,6 +792,9 @@ function AppWorkspace({ auctionData }: { auctionData: ReturnType<typeof useAucti
                 metrics={metrics}
                 canEdit={canEdit}
                 onAddCollection={() => setCollectionModalOpen(true)}
+                onUpdateCollectionDate={async (col, newCollectionDate) => {
+                  await updateCollectionDate(col.id, newCollectionDate);
+                }}
                 onDeleteCollection={handleDeleteCollection}
               />
             )}

@@ -61,6 +61,7 @@ import { ARABIC_MONTHS, formatAED, formatNumber, formatPercent, getMonthLabel } 
 import { AuctionFinancialReportBanner } from '../AuctionFinancialReportBanner';
 import { AuctionRegistryBanner } from '../AuctionRegistryBanner';
 import { FinancialCollectionsBanner } from '../FinancialCollectionsBanner';
+import { PaymentDatePickerModal } from '../PaymentDatePickerModal';
 import { SaleDatePickerModal } from '../SaleDatePickerModal';
 import { useSmartDialog } from '../SmartDialogSystem';
 import { VehicleInventoryBanner } from '../VehicleInventoryBanner';
@@ -1496,6 +1497,7 @@ interface CollectionsViewProps {
   metrics: ComputedFinancialMetrics;
   canEdit: boolean;
   onAddCollection: () => void;
+  onUpdateCollectionDate?: (c: CollectionRecord, newCollectionDate: string) => Promise<void>;
   onDeleteCollection: (c: CollectionRecord) => void;
 }
 
@@ -1518,12 +1520,17 @@ export const CollectionsView: React.FC<CollectionsViewProps> = ({
   metrics,
   canEdit,
   onAddCollection,
+  onUpdateCollectionDate,
   onDeleteCollection,
 }) => {
+  const { showToast } = useSmartDialog();
   const [payFilter, setPayFilter] = useState<'all' | 'paid' | 'partial' | 'unpaid'>('all');
   const [searchTerm, setSearchTerm] = useState('');
   const [page, setPage] = useState(1);
   const [failedKpiThumbs, setFailedKpiThumbs] = useState<Record<string, boolean>>({});
+  const [editingPaymentDateRecord, setEditingPaymentDateRecord] = useState<CollectionRecord | null>(
+    null
+  );
 
   const unpaidVehicles = useMemo(
     () => vehicles.filter((v) => v.status !== 'unsold' && v.salePrice > v.collectedAmount),
@@ -1836,8 +1843,31 @@ export const CollectionsView: React.FC<CollectionsViewProps> = ({
                       >
                         {formatAED(rem)}
                       </td>
-                      <td className="font-mono-num tabular-nums whitespace-nowrap px-3 py-2.5 text-slate-600">
-                        {c.collectionDate}
+                      <td className="px-3 py-2.5 whitespace-nowrap text-slate-600">
+                        {canEdit && onUpdateCollectionDate ? (
+                          <button
+                            type="button"
+                            onClick={() => setEditingPaymentDateRecord(c)}
+                            title={
+                              c.collectionDate
+                                ? `تعديل تاريخ الدفع (${c.collectionDate})`
+                                : 'تحديد تاريخ الدفع'
+                            }
+                            aria-label={`تعديل تاريخ الدفع لعملية ${c.receiptNo}`}
+                            className="group inline-flex cursor-pointer items-center gap-1 rounded-md border border-transparent px-1.5 py-0.5 font-mono-num tabular-nums transition hover:border-blue-200 hover:bg-blue-50/90 hover:text-[#0B4F93] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0B4F93]/50"
+                          >
+                            <Calendar
+                              className="h-3.5 w-3.5 shrink-0 text-[#0B4F93] transition-transform group-hover:scale-110"
+                              aria-hidden="true"
+                            />
+                            <span>{c.collectionDate || '—'}</span>
+                          </button>
+                        ) : (
+                          <div className="inline-flex items-center gap-1 font-mono-num tabular-nums">
+                            <Calendar className="h-3.5 w-3.5 shrink-0 text-slate-400" aria-hidden="true" />
+                            <span>{c.collectionDate || '—'}</span>
+                          </div>
+                        )}
                       </td>
                       <td className="px-3 py-2.5 whitespace-nowrap">
                         <span
@@ -1994,6 +2024,34 @@ export const CollectionsView: React.FC<CollectionsViewProps> = ({
           </div>
         </div>
       )}
+
+      <PaymentDatePickerModal
+        isOpen={Boolean(editingPaymentDateRecord)}
+        record={editingPaymentDateRecord}
+        onClose={() => setEditingPaymentDateRecord(null)}
+        onSavePaymentDate={async (targetRecord, newDate) => {
+          if (!onUpdateCollectionDate) return;
+          try {
+            await onUpdateCollectionDate(targetRecord, newDate);
+            showToast({
+              variant: 'success',
+              title: 'تم تحديث تاريخ الدفع بنجاح',
+              description: `تم حفظ تاريخ الدفع لعملية التحصيل ${targetRecord.receiptNo} (${targetRecord.bidderName}) إلى ${newDate}.`,
+            });
+          } catch (err) {
+            const msg =
+              err instanceof Error
+                ? err.message
+                : 'تعذر حفظ تاريخ الدفع في قاعدة البيانات.';
+            showToast({
+              variant: 'error',
+              title: 'فشل تحديث تاريخ الدفع',
+              description: msg,
+            });
+            throw err;
+          }
+        }}
+      />
     </div>
   );
 };
