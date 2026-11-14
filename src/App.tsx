@@ -92,6 +92,7 @@ function AppWorkspace({ auctionData }: { auctionData: ReturnType<typeof useAucti
     saveAuction,
     deleteAuction,
     saveVehicle,
+    updateVehicleSaleDate,
     bulkImportVehicles,
     deleteVehicle,
     saveCollection,
@@ -774,6 +775,9 @@ function AppWorkspace({ auctionData }: { auctionData: ReturnType<typeof useAucti
                 onEditVehicle={(v) => {
                   setEditingVehicle(v);
                   setVehicleModalOpen(true);
+                }}
+                onUpdateSaleDate={async (vehicle, newSaleDate) => {
+                  await updateVehicleSaleDate(vehicle.id, newSaleDate);
                 }}
                 onDeleteVehicle={handleDeleteVehicle}
                 onOpenImport={() => setImportModalOpen(true)}

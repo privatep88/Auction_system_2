@@ -1,9 +1,16 @@
 import type { SystemSettings } from '../src/types';
 import { buildAuctionLookupMap, resolveVehicleAuction } from '../src/utils/auctionLink';
+import { computeMonthlyTrend, filterVehicles } from '../src/utils/calculations';
 import {
   generateDemoDataset,
   runFinancialValidationSuite,
 } from '../src/utils/demoDataGenerator';
+import {
+  buildCalendarMonthGrid,
+  formatIsoDateParts,
+  isValidIsoCalendarDate,
+  parseIsoDateParts,
+} from '../src/utils/saleDate';
 
 const demoSettings: SystemSettings = {
   id: 'demo_settings',
@@ -78,9 +85,76 @@ if (!sampleLinkedVehicle) {
   }
 }
 
+// Sale date editing & live report synchronization verification
+const novSoldSample = dataset.vehicles.find(
+  (v) => v.year === 2026 && v.month === 11 && v.status === 'sold'
+);
+const gridNov = buildCalendarMonthGrid(2026, 11);
+const dateValidationOk =
+  isValidIsoCalendarDate('2026-11-15') &&
+  isValidIsoCalendarDate('2024-02-29') &&
+  !isValidIsoCalendarDate('2026-02-29') &&
+  !isValidIsoCalendarDate('2026-13-01') &&
+  !isValidIsoCalendarDate('not-a-date') &&
+  formatIsoDateParts(2026, 12, 5) === '2026-12-05' &&
+  gridNov.length === 42 &&
+  gridNov.filter((c) => c.isCurrentMonth).length === 30;
+
+if (!novSoldSample || !dateValidationOk) {
+  failedCount += 1;
+  console.error('[FAIL] T14: Date calendar validation failed.');
+} else {
+  const newDate = '2026-10-25';
+  const parsed = parseIsoDateParts(newDate)!;
+  const modifiedVehicles = dataset.vehicles.map((v) =>
+    v.id === novSoldSample.id
+      ? { ...v, saleDate: newDate, year: parsed.year, month: parsed.month }
+      : v
+  );
+
+  const octBefore = filterVehicles(dataset.vehicles, {
+    month: 10,
+    year: 2026,
+    location: 'all',
+    auctionId: 'all',
+    status: 'all',
+  });
+  const octAfter = filterVehicles(modifiedVehicles, {
+    month: 10,
+    year: 2026,
+    location: 'all',
+    auctionId: 'all',
+    status: 'all',
+  });
+  const trendBefore = computeMonthlyTrend(dataset.vehicles, dataset.collections, 2026, 'all', 'all');
+  const trendAfter = computeMonthlyTrend(modifiedVehicles, dataset.collections, 2026, 'all', 'all');
+
+  const annualSaleBefore = trendBefore.reduce((s, p) => s + p.saleValue, 0);
+  const annualSaleAfter = trendAfter.reduce((s, p) => s + p.saleValue, 0);
+  const annualCollectedBefore = trendBefore.reduce((s, p) => s + p.collectedAmount, 0);
+  const annualCollectedAfter = trendAfter.reduce((s, p) => s + p.collectedAmount, 0);
+
+  const octPointBefore = trendBefore.find((p) => p.month === 10)!;
+  const octPointAfter = trendAfter.find((p) => p.month === 10)!;
+
+  if (
+    octAfter.length === octBefore.length + 1 &&
+    octPointAfter.saleValue === octPointBefore.saleValue + novSoldSample.salePrice &&
+    annualSaleBefore === annualSaleAfter &&
+    annualCollectedBefore === annualCollectedAfter
+  ) {
+    console.log(
+      `[PASS] T14: التحقق من تعديل تاريخ البيع والمزامنة الزمنية في التقارير الحية دون تغيير المجاميع السنوية`
+    );
+  } else {
+    failedCount += 1;
+    console.error('[FAIL] T14: Sale date period reclassification or financial invariance failed.');
+  }
+}
+
 if (failedCount > 0) {
   console.error(`\nFinancial validation failed: ${failedCount} test(s) did not pass.`);
   process.exit(1);
 }
 
-console.log(`\nAll ${results.length + 1} financial & operational integrity tests passed.`);
+console.log(`\nAll ${results.length + 2} financial & operational integrity tests passed.`);

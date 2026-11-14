@@ -61,6 +61,7 @@ import { ARABIC_MONTHS, formatAED, formatNumber, formatPercent, getMonthLabel } 
 import { AuctionFinancialReportBanner } from '../AuctionFinancialReportBanner';
 import { AuctionRegistryBanner } from '../AuctionRegistryBanner';
 import { FinancialCollectionsBanner } from '../FinancialCollectionsBanner';
+import { SaleDatePickerModal } from '../SaleDatePickerModal';
 import { useSmartDialog } from '../SmartDialogSystem';
 import { VehicleInventoryBanner } from '../VehicleInventoryBanner';
 
@@ -1040,6 +1041,7 @@ interface VehiclesLedgerViewProps {
   isDemoMode?: boolean;
   onAddVehicle: () => void;
   onEditVehicle: (v: Vehicle) => void;
+  onUpdateSaleDate?: (v: Vehicle, newSaleDate: string) => Promise<void>;
   onDeleteVehicle: (v: Vehicle) => void;
   onOpenImport: () => void;
 }
@@ -1054,12 +1056,15 @@ export const VehiclesLedgerView: React.FC<VehiclesLedgerViewProps> = ({
   isDemoMode = false,
   onAddVehicle,
   onEditVehicle,
+  onUpdateSaleDate,
   onDeleteVehicle,
   onOpenImport,
 }) => {
+  const { showToast } = useSmartDialog();
   const [searchTerm, setSearchTerm] = useState('');
   const [page, setPage] = useState(1);
   const [headerThumbFailed, setHeaderThumbFailed] = useState(false);
+  const [editingSaleDateVehicle, setEditingSaleDateVehicle] = useState<Vehicle | null>(null);
 
   const auctionsById = useMemo(() => buildAuctionLookupMap(auctions), [auctions]);
 
@@ -1300,7 +1305,24 @@ export const VehiclesLedgerView: React.FC<VehiclesLedgerViewProps> = ({
                         </div>
                       </td>
                       <td className="px-3 py-2.5 whitespace-nowrap text-slate-600">
-                        {v.saleDate ? (
+                        {canEdit && onUpdateSaleDate ? (
+                          <button
+                            type="button"
+                            onClick={() => setEditingSaleDateVehicle(v)}
+                            title={
+                              v.saleDate
+                                ? `تعديل تاريخ البيع (${v.saleDate})`
+                                : 'تحديد تاريخ البيع'
+                            }
+                            className="group inline-flex cursor-pointer items-center gap-1 rounded-md border border-transparent px-1.5 py-0.5 font-mono-num tabular-nums transition hover:border-blue-200 hover:bg-blue-50/90 hover:text-[#0B4F93] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0B4F93]/50"
+                          >
+                            <Calendar
+                              className="h-3.5 w-3.5 shrink-0 text-[#0B4F93] transition-transform group-hover:scale-110"
+                              aria-hidden="true"
+                            />
+                            <span>{v.saleDate || '—'}</span>
+                          </button>
+                        ) : v.saleDate ? (
                           <div className="inline-flex items-center gap-1 font-mono-num tabular-nums">
                             <Calendar className="h-3.5 w-3.5 shrink-0 text-slate-400" aria-hidden="true" />
                             <span>{v.saleDate}</span>
@@ -1428,6 +1450,39 @@ export const VehiclesLedgerView: React.FC<VehiclesLedgerViewProps> = ({
           </div>
         )}
       </div>
+
+      <SaleDatePickerModal
+        isOpen={Boolean(editingSaleDateVehicle)}
+        vehicle={editingSaleDateVehicle}
+        auctionLabel={
+          editingSaleDateVehicle
+            ? resolveVehicleAuction(editingSaleDateVehicle, auctionsById).label
+            : ''
+        }
+        onClose={() => setEditingSaleDateVehicle(null)}
+        onSaveSaleDate={async (targetVehicle, newDate) => {
+          if (!onUpdateSaleDate) return;
+          try {
+            await onUpdateSaleDate(targetVehicle, newDate);
+            showToast({
+              variant: 'success',
+              title: 'تم تحديث تاريخ البيع بنجاح',
+              description: `تم حفظ تاريخ بيع المركبة ${targetVehicle.make} ${targetVehicle.model} (لوت ${targetVehicle.lotNumber}) إلى ${newDate}.`,
+            });
+          } catch (err) {
+            const msg =
+              err instanceof Error
+                ? err.message
+                : 'تعذر حفظ تاريخ البيع في قاعدة البيانات.';
+            showToast({
+              variant: 'error',
+              title: 'فشل تحديث تاريخ البيع',
+              description: msg,
+            });
+            throw err;
+          }
+        }}
+      />
     </div>
   );
 };

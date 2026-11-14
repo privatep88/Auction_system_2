@@ -193,6 +193,7 @@ export function exportVehiclesToXlsx(
       'سنة الصنع': v.modelYear,
       'رقم الشاصي': v.vin || '',
       'الموقع': v.location,
+      'تاريخ البيع': v.saleDate || '',
       'الشهر': v.month,
       'السنة': v.year,
       'القيمة التقديرية (AED)': v.estimatedValue,

@@ -77,7 +77,7 @@ service cloud.firestore {
 
     function isValidVehicle(data) {
       return data.keys().hasAll(['id', 'auctionId', 'lotNumber', 'make', 'model', 'modelYear', 'location', 'year', 'month', 'estimatedValue', 'salePrice', 'collectedAmount', 'status', 'platformFee', 'adminFee', 'forkliftFee', 'recoveryFee', 'ownerId', 'createdAt', 'updatedAt'])
-        && data.keys().hasOnly(['id', 'auctionId', 'lotNumber', 'make', 'model', 'modelYear', 'vin', 'location', 'year', 'month', 'estimatedValue', 'salePrice', 'collectedAmount', 'status', 'platformFee', 'adminFee', 'forkliftFee', 'recoveryFee', 'buyerName', 'ownerId', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'auctionId', 'lotNumber', 'make', 'model', 'modelYear', 'vin', 'location', 'year', 'month', 'estimatedValue', 'salePrice', 'collectedAmount', 'status', 'saleDate', 'platformFee', 'adminFee', 'forkliftFee', 'recoveryFee', 'buyerName', 'ownerId', 'createdAt', 'updatedAt'])
         && isValidId(data.id)
         && isValidId(data.auctionId)
         && isValidId(data.ownerId)
@@ -93,6 +93,7 @@ service cloud.firestore {
         && data.salePrice is number && data.salePrice >= 0
         && data.collectedAmount is number && data.collectedAmount >= 0
         && data.status in ['sold', 'unsold', 'pending']
+        && (!('saleDate' in data) || (data.saleDate is string && data.saleDate.size() <= 32))
         && data.platformFee is number && data.platformFee >= 0
         && data.adminFee is number && data.adminFee >= 0
         && data.forkliftFee is number && data.forkliftFee >= 0
@@ -251,7 +252,7 @@ service cloud.firestore {
         && incoming().updatedAt == request.time
         && (isAdmin() || (
           existing().ownerId == request.auth.uid
-          && incoming().diff(existing()).affectedKeys().hasOnly(['auctionId', 'lotNumber', 'make', 'model', 'modelYear', 'vin', 'location', 'year', 'month', 'estimatedValue', 'salePrice', 'collectedAmount', 'status', 'platformFee', 'adminFee', 'forkliftFee', 'recoveryFee', 'buyerName', 'updatedAt'])
+          && incoming().diff(existing()).affectedKeys().hasOnly(['auctionId', 'lotNumber', 'make', 'model', 'modelYear', 'vin', 'location', 'year', 'month', 'estimatedValue', 'salePrice', 'collectedAmount', 'status', 'saleDate', 'platformFee', 'adminFee', 'forkliftFee', 'recoveryFee', 'buyerName', 'updatedAt'])
         ));
       allow delete: if isValidId(vehicleId) && isVerified() && (isAdmin() || existing().ownerId == request.auth.uid);
     }

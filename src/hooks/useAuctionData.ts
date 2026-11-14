@@ -10,6 +10,7 @@ import {
   deleteDoc,
   doc,
   getDoc,
+  getDocFromServer,
   onSnapshot,
   query,
   serverTimestamp,
@@ -40,6 +41,7 @@ import {
   WorkspaceMode,
 } from '../types';
 import { generateDemoDataset } from '../utils/demoDataGenerator';
+import { formatIsoDateParts, parseIsoDateParts } from '../utils/saleDate';
 import { generateSafeId, getUaeCurrentDate } from '../utils/uaeDate';
 
 const LOCAL_STORAGE_KEY = 'saaed_auction_workspace_v1';
@@ -929,6 +931,7 @@ export function useAuctionData() {
               salePrice: payload.salePrice,
               collectedAmount: payload.collectedAmount,
               status: payload.status,
+              ...(payload.saleDate ? { saleDate: payload.saleDate } : {}),
               platformFee: payload.platformFee,
               adminFee: payload.adminFee,
               forkliftFee: payload.forkliftFee,
@@ -955,6 +958,7 @@ export function useAuctionData() {
             salePrice: payload.salePrice,
             collectedAmount: payload.collectedAmount,
             status: payload.status,
+            ...(payload.saleDate ? { saleDate: payload.saleDate } : {}),
             platformFee: payload.platformFee,
             adminFee: payload.adminFee,
             forkliftFee: payload.forkliftFee,
@@ -983,6 +987,91 @@ export function useAuctionData() {
       return id;
     },
     [addAuditEntry, canEdit, isCloudMode, isDemoMode, updateDemoStore, updateLocalStore, user]
+  );
+
+  const updateVehicleSaleDate = useCallback(
+    async (vehicleId: string, newSaleDate: string): Promise<Vehicle> => {
+      if (!canEdit) {
+        throw new Error('ليس لديك صلاحية تعديل تاريخ بيع المركبة حسب مستوى الصلاحية الحالي.');
+      }
+      const parsed = parseIsoDateParts(newSaleDate);
+      if (!parsed) {
+        throw new Error('تاريخ البيع غير صالح. يجب إدخال تاريخ صحيح بصيغة YYYY-MM-DD.');
+      }
+      const normalizedDate = formatIsoDateParts(parsed.year, parsed.month, parsed.day);
+      const target = vehicles.find((v) => v.id === vehicleId);
+      if (!target) {
+        throw new Error('تعذر العثور على سجل المركبة المحدد لتحديث تاريخ البيع.');
+      }
+
+      const previousDate = target.saleDate || 'غير محدد';
+      let updatedRecord: Vehicle = {
+        ...target,
+        saleDate: normalizedDate,
+        year: parsed.year,
+        month: parsed.month,
+      };
+
+      if (isDemoMode || !isCloudMode) {
+        const nowIso = new Date().toISOString();
+        updatedRecord = {
+          ...updatedRecord,
+          updatedAt: nowIso,
+        };
+        const applyDateUpdate = <T extends { vehicles: Vehicle[] }>(prev: T): T => ({
+          ...prev,
+          vehicles: prev.vehicles.map((v) =>
+            v.id === vehicleId
+              ? {
+                  ...v,
+                  saleDate: normalizedDate,
+                  year: parsed.year,
+                  month: parsed.month,
+                  updatedAt: nowIso,
+                }
+              : v
+          ),
+        });
+        if (isDemoMode) {
+          updateDemoStore((prev) => applyDateUpdate(prev));
+        } else {
+          updateLocalStore((prev) => applyDateUpdate(prev));
+        }
+      } else if (isCloudMode && user) {
+        const ref = doc(db, 'vehicles', vehicleId);
+        try {
+          await updateDoc(ref, {
+            saleDate: normalizedDate,
+            year: parsed.year,
+            month: parsed.month,
+            updatedAt: serverTimestamp(),
+          });
+          const verifiedSnap = await getDocFromServer(ref).catch(() => getDoc(ref));
+          if (!verifiedSnap.exists()) {
+            throw new Error('تعذر التحقق من سجل المركبة بعد تحديث تاريخ البيع في قاعدة البيانات.');
+          }
+          const serverData = verifiedSnap.data() as Vehicle;
+          if (serverData.saleDate !== normalizedDate) {
+            throw new Error('لم تتطابق القيمة المحفوظة في قاعدة البيانات مع التاريخ الجديد.');
+          }
+          updatedRecord = serverData;
+        } catch (err) {
+          handleFirestoreError(err, OperationType.UPDATE, `vehicles/${vehicleId}`);
+        }
+      }
+
+      await addAuditEntry(
+        'vehicle',
+        vehicleId,
+        'تعديل تاريخ البيع',
+        `تعديل تاريخ بيع المركبة ${target.make} ${target.model} (لوت ${target.lotNumber}) من ${previousDate} إلى ${normalizedDate}`,
+        parsed.year,
+        parsed.month
+      );
+
+      return updatedRecord;
+    },
+    [addAuditEntry, canEdit, isCloudMode, isDemoMode, updateDemoStore, updateLocalStore, user, vehicles]
   );
 
   const bulkImportVehicles = useCallback(
@@ -1752,6 +1841,7 @@ export function useAuctionData() {
     saveAuction,
     deleteAuction,
     saveVehicle,
+    updateVehicleSaleDate,
     bulkImportVehicles,
     deleteVehicle,
     saveCollection,
