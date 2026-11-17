@@ -23,11 +23,17 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Node.js 22
+      - name: Setup Node.js 24
         uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: ">=24.12.0"
           cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Verify Node.js and npm versions
+        run: |
+          node --version
+          npm --version
 
       - name: Install dependencies cleanly
         run: npm ci
@@ -35,7 +41,7 @@ jobs:
       - name: TypeScript typecheck
         run: npm run lint
 
-      - name: Run 12-point financial validation suite
+      - name: Run 17-point financial & Excel validation suite
         run: npm test
 
       - name: Resolve GitHub Pages base path

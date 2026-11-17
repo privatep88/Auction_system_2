@@ -66,12 +66,13 @@ export default defineConfig(({command}) => {
       assetsDir: 'assets',
       emptyOutDir: true,
       sourcemap: false,
-      chunkSizeWarningLimit: 900,
+      chunkSizeWarningLimit: 1100,
       rolldownOptions: {
         output: {
           manualChunks(id) {
             if (!id.includes('node_modules')) return undefined;
             if (id.includes('firebase')) return 'vendor-firebase';
+            if (id.includes('exceljs')) return 'vendor-exceljs';
             if (id.includes('xlsx')) return 'vendor-xlsx';
             if (id.includes('lucide-react')) return 'vendor-icons';
             if (id.includes('motion')) return 'vendor-motion';
