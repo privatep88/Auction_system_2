@@ -92,7 +92,8 @@ export function generateSafeId(prefix: string): string {
 }
 
 export function assetUrl(relativePath: string): string {
-  const base = import.meta.env.BASE_URL || '/';
+  const base =
+    (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.BASE_URL) || '/';
   const normalizedBase = base.endsWith('/') ? base : `${base}/`;
   const cleanPath = relativePath.startsWith('/') ? relativePath.slice(1) : relativePath;
   return `${normalizedBase}${cleanPath}`;

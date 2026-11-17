@@ -152,6 +152,51 @@
   background: #0b4f93;
 }
 
+/* Auction Details Modal — Independent Scrollable Vehicle Table */
+.saaed-auction-vehicles-scroll {
+  max-height: 390px;
+  overflow-y: auto;
+  overflow-x: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+  scrollbar-color: #1d63b8 #eaf1f8;
+}
+
+@media (max-width: 640px) {
+  .saaed-auction-vehicles-scroll {
+    max-height: 310px;
+  }
+}
+
+.saaed-auction-vehicles-scroll::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+
+.saaed-auction-vehicles-scroll::-webkit-scrollbar-track {
+  background: #eaf1f8;
+  border-radius: 9999px;
+}
+
+.saaed-auction-vehicles-scroll::-webkit-scrollbar-thumb {
+  background: #2467a8;
+  border-radius: 9999px;
+  border: 1.5px solid #eaf1f8;
+}
+
+.saaed-auction-vehicles-scroll::-webkit-scrollbar-thumb:hover {
+  background: #0b4f93;
+}
+
+.saaed-auction-vehicles-scroll thead th {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  background-color: #edf3fa;
+  box-shadow: 0 1px 0 #cbd5e1;
+}
+
 /* A4 Preview Sheet Styling (Screen) */
 .saaed-a4-sheet {
   box-sizing: border-box;

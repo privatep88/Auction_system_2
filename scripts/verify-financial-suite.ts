@@ -1,6 +1,16 @@
+import fs from 'node:fs';
+import ExcelJS from 'exceljs';
+import * as XLSX from 'xlsx';
 import type { SystemSettings } from '../src/types';
-import { buildAuctionLookupMap, resolveVehicleAuction } from '../src/utils/auctionLink';
+import {
+  buildAuctionLookupMap,
+  filterAuctionModalVehicles,
+  getAuctionLinkedVehicles,
+  resolveVehicleAuction,
+} from '../src/utils/auctionLink';
 import { computeMonthlyTrend, filterCollections, filterVehicles } from '../src/utils/calculations';
+import { extractVehicleRowsFromWorkbook } from '../src/utils/excelCsv';
+import { ExcelExportService, ExcelValidationService } from '../src/utils/saaedExcelEngine';
 import {
   generateDemoDataset,
   runFinancialValidationSuite,
@@ -224,9 +234,127 @@ if (!targetPaymentSample) {
   }
 }
 
-if (failedCount > 0) {
-  console.error(`\nFinancial validation failed: ${failedCount} test(s) did not pass.`);
-  process.exit(1);
+// T16: Complete Auction Vehicle List (All 450 / 320 / 280 / 200 vehicles per auction, zero truncation, zero duplicates)
+const auc1Vehicles = getAuctionLinkedVehicles(dataset.vehicles, 'DEMO-AUC-2026-001');
+const auc2Vehicles = getAuctionLinkedVehicles(dataset.vehicles, 'DEMO-AUC-2026-002');
+const auc3Vehicles = getAuctionLinkedVehicles(dataset.vehicles, 'DEMO-AUC-2026-003');
+const auc4Vehicles = getAuctionLinkedVehicles(dataset.vehicles, 'DEMO-AUC-2026-004');
+const duplicatedInput = [...auc1Vehicles, auc1Vehicles[0]];
+const dedupedCheck = getAuctionLinkedVehicles(duplicatedInput, 'DEMO-AUC-2026-001');
+const lastAuc1Lot = auc1Vehicles[auc1Vehicles.length - 1]?.lotNumber || '';
+const searchFiltered = filterAuctionModalVehicles(auc1Vehicles, lastAuc1Lot);
+
+const completeListPassed =
+  auc1Vehicles.length === 450 &&
+  auc2Vehicles.length === 320 &&
+  auc3Vehicles.length === 280 &&
+  auc4Vehicles.length === 200 &&
+  auc1Vehicles[0]?.lotNumber === 'DEMO-LOT-0001' &&
+  Boolean(lastAuc1Lot) &&
+  auc1Vehicles.every((v) => v.auctionId === 'DEMO-AUC-2026-001') &&
+  auc2Vehicles.every((v) => v.auctionId === 'DEMO-AUC-2026-002') &&
+  auc3Vehicles.every((v) => v.auctionId === 'DEMO-AUC-2026-003') &&
+  auc4Vehicles.every((v) => v.auctionId === 'DEMO-AUC-2026-004') &&
+  dedupedCheck.length === 450 &&
+  searchFiltered.some((v) => v.lotNumber === lastAuc1Lot);
+
+if (completeListPassed) {
+  console.log(
+    `[PASS] T16: عرض جميع المركبات المرتبطة بالمزاد بالكامل دون اقتصار على 12 مركبة (450 / 320 / 280 / 200 مركبة)`
+  );
+} else {
+  failedCount += 1;
+  console.error('[FAIL] T16: Auction details vehicle list completeness or isolation check failed.');
 }
 
-console.log(`\nAll ${results.length + 3} financial & operational integrity tests passed.`);
+// T17: Mandatory DEMO_SAAED_Vehicles_2026_11.xlsx Enterprise Export & Round-Trip Verification
+async function verifyEnterpriseExcelExport() {
+  const novVehicles = filterVehicles(dataset.vehicles, {
+    month: 11,
+    year: 2026,
+    location: 'all',
+    auctionId: 'all',
+    status: 'all',
+  });
+
+  const { workbook, validation } = await ExcelExportService.buildVehiclesEnterpriseWorkbook(
+    novVehicles,
+    {
+      isDemoMode: true,
+      auctionsById,
+      periodLabel: 'نوفمبر 2026',
+      locationLabel: 'جميع الساحات',
+    }
+  );
+
+  const exportPath = '/tmp/DEMO_SAAED_Vehicles_2026_11.xlsx';
+  const buffer = await workbook.xlsx.writeBuffer();
+  fs.writeFileSync(exportPath, Buffer.from(buffer));
+
+  // Re-open from disk via ExcelJS to verify zero corruption
+  const reloadedWb = new ExcelJS.Workbook();
+  await reloadedWb.xlsx.readFile(exportPath);
+  const reloadedValidation = ExcelValidationService.validateVehiclesWorkbook(
+    reloadedWb,
+    novVehicles
+  );
+
+  // Also re-open via SheetJS (XLSX) and extract vehicle rows for round-trip compatibility
+  const sheetJsWb = XLSX.read(fs.readFileSync(exportPath), { type: 'buffer' });
+  const roundTripRows = extractVehicleRowsFromWorkbook(sheetJsWb).filter((r) =>
+    typeof r['م'] === 'number'
+  );
+
+  const soldInNov = novVehicles.filter((v) => v.status === 'sold').length;
+  const unsoldInNov = novVehicles.filter((v) => v.status === 'unsold').length;
+  const novAuctionCount = new Set(novVehicles.map((v) => v.auctionId)).size;
+
+  const excelSuitePassed =
+    validation.valid &&
+    reloadedValidation.valid &&
+    reloadedValidation.sheetNames.includes('البيانات التفصيلية للمركبات') &&
+    reloadedValidation.sheetNames.includes('التقرير التنفيذي والمخططات') &&
+    reloadedValidation.vehicleRowCount === 1250 &&
+    soldInNov === 1104 &&
+    unsoldInNov === 146 &&
+    novAuctionCount === 4 &&
+    reloadedValidation.columnCount === 21 &&
+    reloadedValidation.totalEstimated === 8450000 &&
+    reloadedValidation.totalSale === 9200000 &&
+    reloadedValidation.totalCollected === 8950000 &&
+    reloadedValidation.totalPlatformFees === 58000 &&
+    reloadedValidation.totalAdminFees === 125000 &&
+    reloadedValidation.totalForkliftFees === 68500 &&
+    reloadedValidation.totalRecoveryFees === 134000 &&
+    reloadedValidation.embeddedMediaCount >= 2 &&
+    reloadedValidation.hasFrozenHeader &&
+    reloadedValidation.hasAutoFilter &&
+    reloadedValidation.hasPrintSetup &&
+    reloadedValidation.emptyUnsoldSaleDatesPreserved &&
+    roundTripRows.length === 1250;
+
+  if (excelSuitePassed) {
+    console.log(
+      `[PASS] T17: التحقق من تصدير وفحص ملف DEMO_SAAED_Vehicles_2026_11.xlsx (1,250 مركبة | 21 عموداً | ${reloadedValidation.embeddedMediaCount} صور مضمنة | أوراق متعددة | معادلات وفلاتر سليمة)`
+    );
+  } else {
+    failedCount += 1;
+    console.error('[FAIL] T17: Enterprise Excel export verification failed:', {
+      errors: reloadedValidation.errors,
+      reloadedValidation,
+      roundTripCount: roundTripRows.length,
+    });
+  }
+
+  if (failedCount > 0) {
+    console.error(`\nFinancial validation failed: ${failedCount} test(s) did not pass.`);
+    process.exit(1);
+  }
+
+  console.log(`\nAll ${results.length + 5} financial & operational integrity tests passed.`);
+}
+
+verifyEnterpriseExcelExport().catch((err) => {
+  console.error('Fatal error in verifyEnterpriseExcelExport:', err);
+  process.exit(1);
+});

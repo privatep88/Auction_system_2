@@ -1,6 +1,13 @@
+import ExcelJS from 'exceljs';
 import * as XLSX from 'xlsx';
 import { Auction, SystemSettings, Vehicle, VehicleStatus } from '../types';
-import { resolveVehicleAuction } from './auctionLink';
+import {
+  ExcelExportService,
+  ExcelExportValidationReport,
+  ExcelLayoutEngine,
+  ExcelPrintConfigurator,
+  ExcelThemeManager,
+} from './saaedExcelEngine';
 import { generateSafeId } from './uaeDate';
 
 export interface ParsedVehicleImportRow {
@@ -55,17 +62,46 @@ function parseStatus(val: unknown, salePrice: number): VehicleStatus {
   return salePrice > 0 ? 'sold' : 'unsold';
 }
 
+/**
+ * Extracts normalized row objects from a worksheet, automatically detecting
+ * whether the header row is on row 1 or below an Enterprise Corporate Header block.
+ */
+export function extractVehicleRowsFromWorkbook(
+  workbook: XLSX.WorkBook
+): Record<string, unknown>[] {
+  const targetSheetName =
+    workbook.SheetNames.find((n) => n.includes('المركبات')) || workbook.SheetNames[0];
+  if (!targetSheetName) return [];
+
+  const sheet = workbook.Sheets[targetSheetName];
+  const matrix = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: '' });
+
+  let headerRowIdx = 0;
+  for (let r = 0; r < Math.min(35, matrix.length); r++) {
+    const rowCells = (matrix[r] || []).map((c) => normalizeHeader(String(c || '')));
+    if (
+      rowCells.includes(normalizeHeader('رقم اللوت')) ||
+      rowCells.includes(normalizeHeader('نوع المركبة')) ||
+      rowCells.includes('lotnumber')
+    ) {
+      headerRowIdx = r;
+      break;
+    }
+  }
+
+  return XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, {
+    range: headerRowIdx,
+    defval: '',
+  });
+}
+
 export async function parseVehiclesSpreadsheet(
   file: File,
   defaults: SystemSettings
 ): Promise<ParsedVehicleImportRow[]> {
   const buffer = await file.arrayBuffer();
   const workbook = XLSX.read(buffer, { type: 'array' });
-  const firstSheetName = workbook.SheetNames[0];
-  if (!firstSheetName) return [];
-
-  const sheet = workbook.Sheets[firstSheetName];
-  const rawRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' });
+  const rawRows = extractVehicleRowsFromWorkbook(workbook);
 
   return rawRows
     .map((row, idx): ParsedVehicleImportRow | null => {
@@ -88,32 +124,66 @@ export async function parseVehiclesSpreadsheet(
       );
       const vin = String(pickField(row, ['رقم الشاصي', 'vin', 'chassis']) || '').trim();
       const estimatedValue = toNum(
-        pickField(row, ['القيمة التقديرية', 'التقديري', 'estimatedvalue', 'estimated', 'reserve']),
+        pickField(row, [
+          'القيمة التقديرية (AED)',
+          'القيمة التقديرية',
+          'التقديري',
+          'estimatedvalue',
+          'estimated',
+          'reserve',
+        ]),
         0
       );
       const salePrice = toNum(
-        pickField(row, ['سعر البيع', 'قيمة البيع', 'saleprice', 'soldprice', 'price']),
+        pickField(row, [
+          'سعر البيع (AED)',
+          'سعر البيع',
+          'قيمة البيع',
+          'saleprice',
+          'soldprice',
+          'price',
+        ]),
         0
       );
       const status = parseStatus(pickField(row, ['الحالة', 'status']), salePrice);
       const collectedAmount = toNum(
-        pickField(row, ['المبلغ المحصل', 'المحصل', 'collectedamount', 'collected', 'paid']),
+        pickField(row, [
+          'المبلغ المحصل (AED)',
+          'المبلغ المحصل',
+          'المحصل',
+          'collectedamount',
+          'collected',
+          'paid',
+        ]),
         status === 'sold' ? salePrice : 0
       );
       const platformFee = toNum(
-        pickField(row, ['رسوم المنصة', 'platformfee', 'platform']),
+        pickField(row, ['رسوم المنصة (AED)', 'رسوم المنصة', 'platformfee', 'platform']),
         status === 'sold' ? defaults.defaultPlatformFee : 0
       );
       const adminFee = toNum(
-        pickField(row, ['الرسوم الإدارية', 'adminfee', 'admin']),
+        pickField(row, ['الرسوم الإدارية (AED)', 'الرسوم الإدارية', 'adminfee', 'admin']),
         status === 'sold' ? defaults.defaultAdminFee : 0
       );
       const forkliftFee = toNum(
-        pickField(row, ['رسوم الفوركلفت', 'الفوركلفت', 'forkliftfee', 'forklift']),
+        pickField(row, [
+          'رسوم الفوركلفت (AED)',
+          'رسوم الفوركلفت',
+          'الفوركلفت',
+          'forkliftfee',
+          'forklift',
+        ]),
         0
       );
       const recoveryFee = toNum(
-        pickField(row, ['رسوم النقل', 'ريكفري', 'ريكفري ساعد', 'recoveryfee', 'recovery']),
+        pickField(row, [
+          'رسوم النقل ريكفري (AED)',
+          'رسوم النقل',
+          'ريكفري',
+          'ريكفري ساعد',
+          'recoveryfee',
+          'recovery',
+        ]),
         0
       );
       const buyerName = String(
@@ -144,74 +214,113 @@ export async function parseVehiclesSpreadsheet(
     .filter((r): r is ParsedVehicleImportRow => r !== null);
 }
 
-export function downloadVehiclesTemplateXlsx() {
-  const sampleTemplate = [
-    {
-      'رقم اللوت': 'LOT-101',
-      'نوع المركبة': 'مرسيدس',
-      'الطراز': 'S-Class',
-      'سنة الصنع': 2024,
-      'رقم الشاصي': '',
-      'القيمة التقديرية': 0,
-      'سعر البيع': 0,
-      'المبلغ المحصل': 0,
-      'الحالة': 'مبيعة',
-      'رسوم المنصة': 0,
-      'الرسوم الإدارية': 0,
-      'رسوم الفوركلفت': 0,
-      'رسوم النقل': 0,
-      'المشتري': '',
-      'الموقع': 'ساحة الحجز – مصفح',
-    },
+export async function downloadVehiclesTemplateXlsx(): Promise<void> {
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'شركة ساعد للأنظمة المرورية | SAAED';
+  const sheet = wb.addWorksheet('المركبات', {
+    views: [{ rightToLeft: true, state: 'frozen', ySplit: 1 }],
+  });
+
+  const headers = [
+    'رقم اللوت',
+    'نوع المركبة',
+    'الطراز',
+    'سنة الصنع',
+    'رقم الشاصي',
+    'القيمة التقديرية',
+    'سعر البيع',
+    'المبلغ المحصل',
+    'الحالة',
+    'رسوم المنصة',
+    'الرسوم الإدارية',
+    'رسوم الفوركلفت',
+    'رسوم النقل',
+    'المشتري',
+    'الموقع',
   ];
-  const ws = XLSX.utils.json_to_sheet(sampleTemplate);
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'المركبات');
-  XLSX.writeFile(wb, 'SAAED_Vehicles_Import_Template.xlsx');
+
+  const headerRow = sheet.getRow(1);
+  headerRow.height = 26;
+  headers.forEach((h, idx) => {
+    const cell = headerRow.getCell(idx + 1);
+    cell.value = h;
+    cell.fill = ExcelThemeManager.fill(ExcelThemeManager.COLORS.navyDark);
+    cell.font = ExcelThemeManager.font({
+      size: 10,
+      bold: true,
+      color: ExcelThemeManager.COLORS.white,
+    });
+    cell.alignment = { horizontal: 'center', vertical: 'middle' };
+    cell.border = ExcelThemeManager.headerBorder();
+  });
+
+  const sampleRow = sheet.getRow(2);
+  sampleRow.height = 22;
+  const sampleValues: (string | number)[] = [
+    'LOT-101',
+    'مرسيدس',
+    'S-Class',
+    2024,
+    '',
+    0,
+    0,
+    0,
+    'مبيعة',
+    0,
+    0,
+    0,
+    0,
+    '',
+    'ساحة الحجز – مصفح',
+  ];
+
+  sampleValues.forEach((v, idx) => {
+    const cell = sampleRow.getCell(idx + 1);
+    cell.value = v;
+    cell.border = ExcelThemeManager.border();
+    cell.font = ExcelThemeManager.font({ size: 10 });
+    cell.alignment = { horizontal: 'center', vertical: 'middle' };
+  });
+
+  ExcelLayoutEngine.applyAdaptiveColumnWidths(sheet, 1, 2, headers);
+  ExcelPrintConfigurator.configureSheetPrint(sheet, {
+    reportTitle: 'قالب استيراد المركبات القياسي – شركة ساعد',
+    orientation: 'landscape',
+    headerRowIndex: 1,
+    lastRowIndex: 2,
+    lastColIndex: headers.length,
+  });
+
+  const buffer = await wb.xlsx.writeBuffer();
+  ExcelExportService.triggerBrowserDownload(buffer, 'SAAED_Vehicles_Import_Template.xlsx');
 }
 
-export function exportVehiclesToXlsx(
+let isExportingVehiclesLock = false;
+
+export async function exportVehiclesToXlsx(
   vehicles: Vehicle[],
   filename: string,
   isDemoMode = false,
   auctionsById?: ReadonlyMap<string, Auction>
-) {
-  const rows = vehicles.map((v, index) => {
-    const auctionName = auctionsById
-      ? resolveVehicleAuction(v, auctionsById).label
-      : v.auctionId && v.auctionId.trim() && v.auctionId !== 'general_auction'
-        ? v.auctionId
-        : 'غير مرتبط بمزاد';
+): Promise<ExcelExportValidationReport | null> {
+  if (isExportingVehiclesLock) return null;
+  isExportingVehiclesLock = true;
+  try {
+    const { workbook, validation } = await ExcelExportService.buildVehiclesEnterpriseWorkbook(
+      vehicles,
+      {
+        isDemoMode,
+        auctionsById,
+      }
+    );
 
-    return {
-      'م': index + 1,
-      'بيئة البيانات': isDemoMode || v.isDemo ? 'بيانات تجريبية (Demo – ليست فعلية)' : 'إنتاج فعلي',
-      'رقم اللوت': v.lotNumber,
-      'اسم المزاد': auctionName,
-      'نوع المركبة': v.make,
-      'الطراز': v.model,
-      'سنة الصنع': v.modelYear,
-      'رقم الشاصي': v.vin || '',
-      'الموقع': v.location,
-      'تاريخ البيع': v.saleDate || '',
-      'الشهر': v.month,
-      'السنة': v.year,
-      'القيمة التقديرية (AED)': v.estimatedValue,
-      'سعر البيع (AED)': v.salePrice,
-      'المبلغ المحصل (AED)': v.collectedAmount,
-      'الحالة': v.status === 'sold' ? 'مبيعة' : v.status === 'pending' ? 'قيد التحصيل' : 'غير مبيعة',
-      'رسوم المنصة (AED)': v.platformFee,
-      'الرسوم الإدارية (AED)': v.adminFee,
-      'رسوم الفوركلفت (AED)': v.forkliftFee,
-      'رسوم النقل ريكفري (AED)': v.recoveryFee,
-      'المشتري': v.buyerName || '',
-    };
-  });
-  const ws = XLSX.utils.json_to_sheet(rows);
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, isDemoMode ? 'تقرير المركبات (تجريبي)' : 'تقرير المركبات');
-  const safeName = isDemoMode && !filename.startsWith('DEMO_') ? `DEMO_${filename}` : filename;
-  XLSX.writeFile(wb, `${safeName}.xlsx`);
+    const safeName = isDemoMode && !filename.startsWith('DEMO_') ? `DEMO_${filename}` : filename;
+    const buffer = await workbook.xlsx.writeBuffer();
+    ExcelExportService.triggerBrowserDownload(buffer, `${safeName}.xlsx`);
+    return validation;
+  } finally {
+    isExportingVehiclesLock = false;
+  }
 }
 
 export function buildVehicleFromImport(

@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import {
   AlertCircle,
   AlertTriangle,
+  ArrowUp,
   Award,
   Calculator,
   Calendar,
@@ -55,7 +56,12 @@ import {
   ServiceFeeRecord,
   Vehicle,
 } from '../../types';
-import { buildAuctionLookupMap, resolveVehicleAuction } from '../../utils/auctionLink';
+import {
+  buildAuctionLookupMap,
+  filterAuctionModalVehicles,
+  getAuctionLinkedVehicles,
+  resolveVehicleAuction,
+} from '../../utils/auctionLink';
 import { exportVehiclesToXlsx } from '../../utils/excelCsv';
 import { ARABIC_MONTHS, formatAED, formatNumber, formatPercent, getMonthLabel } from '../../utils/uaeDate';
 import { AuctionFinancialReportBanner } from '../AuctionFinancialReportBanner';
@@ -553,6 +559,10 @@ interface AuctionsRegistryViewProps {
   onSelectAuctionFilter: (auctionId: string) => void;
 }
 
+const MODAL_VEHICLE_ROW_HEIGHT = 36;
+const MODAL_VEHICLE_OVERSCAN = 20;
+const MODAL_VIRTUAL_THRESHOLD = 80;
+
 export const AuctionsRegistryView: React.FC<AuctionsRegistryViewProps> = ({
   auctions,
   vehicles,
@@ -565,9 +575,17 @@ export const AuctionsRegistryView: React.FC<AuctionsRegistryViewProps> = ({
 }) => {
   const [inspectingAuction, setInspectingAuction] = useState<Auction | null>(null);
   const [modalBannerFailed, setModalBannerFailed] = useState(false);
+  const [modalVehicleSearch, setModalVehicleSearch] = useState('');
+  const [tableScrollTop, setTableScrollTop] = useState(0);
+  const vehiclesScrollRef = useRef<HTMLDivElement | null>(null);
+
+  const activeInspectingAuction = useMemo(() => {
+    if (!inspectingAuction) return null;
+    return auctions.find((a) => a.id === inspectingAuction.id) ?? inspectingAuction;
+  }, [auctions, inspectingAuction]);
 
   useEffect(() => {
-    if (!inspectingAuction) return;
+    if (!activeInspectingAuction) return;
     const handleEsc = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         if (document.querySelector('[data-saaed-smart-dialog="true"]')) return;
@@ -576,7 +594,15 @@ export const AuctionsRegistryView: React.FC<AuctionsRegistryViewProps> = ({
     };
     document.addEventListener('keydown', handleEsc);
     return () => document.removeEventListener('keydown', handleEsc);
-  }, [inspectingAuction]);
+  }, [activeInspectingAuction]);
+
+  useEffect(() => {
+    setModalVehicleSearch('');
+    setTableScrollTop(0);
+    if (vehiclesScrollRef.current) {
+      vehiclesScrollRef.current.scrollTop = 0;
+    }
+  }, [activeInspectingAuction?.id]);
 
   const registrySummary = useMemo(() => {
     const auctionIdSet = new Set(auctions.map((a) => a.id));
@@ -587,8 +613,8 @@ export const AuctionsRegistryView: React.FC<AuctionsRegistryViewProps> = ({
   }, [auctions, vehicles]);
 
   const inspectedStats = useMemo(() => {
-    if (!inspectingAuction) return null;
-    const aucVehicles = vehicles.filter((v) => v.auctionId === inspectingAuction.id);
+    if (!activeInspectingAuction) return null;
+    const aucVehicles = getAuctionLinkedVehicles(vehicles, activeInspectingAuction.id);
     const sold = aucVehicles.filter((v) => v.status === 'sold');
     const unsold = aucVehicles.filter((v) => v.status === 'unsold');
     const totalEst = aucVehicles.reduce((s, v) => s + v.estimatedValue, 0);
@@ -596,9 +622,9 @@ export const AuctionsRegistryView: React.FC<AuctionsRegistryViewProps> = ({
     const totalSale = sold.reduce((s, v) => s + v.salePrice, 0);
     const totalCollected = aucVehicles.reduce((s, v) => s + v.collectedAmount, 0);
     const remaining = Math.max(0, totalSale - totalCollected);
-    const saaedShare = totalCollected * (inspectingAuction.saaedSharePercent / 100);
-    const thirdShare = totalCollected * (inspectingAuction.thirdPartySharePercent / 100);
-    const aucServices = serviceRecords.filter((s) => s.auctionId === inspectingAuction.id);
+    const saaedShare = totalCollected * (activeInspectingAuction.saaedSharePercent / 100);
+    const thirdShare = totalCollected * (activeInspectingAuction.thirdPartySharePercent / 100);
+    const aucServices = serviceRecords.filter((s) => s.auctionId === activeInspectingAuction.id);
     const servicesSum =
       aucServices.length > 0
         ? aucServices.reduce((s, r) => s + r.collectedAmount, 0)
@@ -619,9 +645,46 @@ export const AuctionsRegistryView: React.FC<AuctionsRegistryViewProps> = ({
       saaedShare,
       thirdShare,
       servicesSum,
-      sampleVehicles: aucVehicles.slice(0, 12),
+      allVehicles: aucVehicles,
     };
-  }, [inspectingAuction, serviceRecords, vehicles]);
+  }, [activeInspectingAuction, serviceRecords, vehicles]);
+
+  const filteredModalVehicles = useMemo(() => {
+    if (!inspectedStats) return [];
+    return filterAuctionModalVehicles(inspectedStats.allVehicles, modalVehicleSearch);
+  }, [inspectedStats, modalVehicleSearch]);
+
+  const virtualWindow = useMemo(() => {
+    const total = filteredModalVehicles.length;
+    if (total <= MODAL_VIRTUAL_THRESHOLD) {
+      return {
+        startIndex: 0,
+        endIndex: total,
+        topSpacerHeight: 0,
+        bottomSpacerHeight: 0,
+        visibleRows: filteredModalVehicles,
+      };
+    }
+
+    const viewportEstimate = 420;
+    const startIndex = Math.max(
+      0,
+      Math.floor(tableScrollTop / MODAL_VEHICLE_ROW_HEIGHT) - MODAL_VEHICLE_OVERSCAN
+    );
+    const endIndex = Math.min(
+      total,
+      Math.ceil((tableScrollTop + viewportEstimate) / MODAL_VEHICLE_ROW_HEIGHT) +
+        MODAL_VEHICLE_OVERSCAN
+    );
+
+    return {
+      startIndex,
+      endIndex,
+      topSpacerHeight: startIndex * MODAL_VEHICLE_ROW_HEIGHT,
+      bottomSpacerHeight: Math.max(0, (total - endIndex) * MODAL_VEHICLE_ROW_HEIGHT),
+      visibleRows: filteredModalVehicles.slice(startIndex, endIndex),
+    };
+  }, [filteredModalVehicles, tableScrollTop]);
 
   return (
     <div className="space-y-4 p-4">
@@ -833,7 +896,7 @@ export const AuctionsRegistryView: React.FC<AuctionsRegistryViewProps> = ({
       </div>
 
       {/* Auction Details Modal (Derived Strictly from Linked Records) */}
-      {inspectingAuction &&
+      {activeInspectingAuction &&
         inspectedStats &&
         typeof document !== 'undefined' &&
         createPortal(
@@ -847,186 +910,317 @@ export const AuctionsRegistryView: React.FC<AuctionsRegistryViewProps> = ({
             <div
               role="dialog"
               aria-modal="true"
-              aria-label={`تفاصيل المزاد ${inspectingAuction.auctionCode}`}
+              aria-label={`تفاصيل المزاد ${activeInspectingAuction.auctionCode}`}
               className="flex max-h-[92dvh] w-full max-w-3xl flex-col overflow-hidden rounded-[16px] border border-[#b7d1eb] bg-white shadow-2xl"
             >
               <div
-                className="sticky top-0 z-10 flex items-center justify-between px-5 py-3.5 text-white"
+                className="sticky top-0 z-10 flex shrink-0 items-center justify-between px-5 py-3.5 text-white"
                 style={{
                   background: 'linear-gradient(90deg, #04162f 0%, #0a2e5c 52%, #062044 100%)',
                 }}
               >
                 <div>
                   <h3 className="text-sm font-extrabold">
-                    تفاصيل المزاد: {inspectingAuction.auctionCode} – {inspectingAuction.title}
+                    تفاصيل المزاد: {activeInspectingAuction.auctionCode} – {activeInspectingAuction.title}
                   </h3>
                   <p className="text-[11px] text-blue-200">
-                  {inspectingAuction.location} · التاريخ: {inspectingAuction.auctionDate || `${ARABIC_MONTHS[inspectingAuction.month - 1]} ${inspectingAuction.year}`}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setInspectingAuction(null)}
-                className="rounded-lg p-1 text-white/80 hover:bg-white/15"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-
-            <div className="space-y-4 p-5 text-xs">
-              {!modalBannerFailed && (
-                <div className="relative h-24 w-full overflow-hidden rounded-xl border border-slate-200 bg-[#041838]">
-                  <img
-                    src={auctionRegistryBannerImg}
-                    alt="صورة توضيحية عامة لساحة مزادات المركبات"
-                    referrerPolicy="no-referrer"
-                    onError={() => setModalBannerFailed(true)}
-                    className="h-full w-full object-cover object-center opacity-85 select-none"
-                  />
-                  <div
-                    aria-hidden="true"
-                    className="pointer-events-none absolute inset-0"
-                    style={{
-                      background:
-                        'linear-gradient(90deg, rgba(4,24,56,0.72) 0%, rgba(4,24,56,0.18) 55%, rgba(4,24,56,0.76) 100%)',
-                    }}
-                  />
-                  <div className="pointer-events-none absolute inset-x-3 bottom-2 flex items-center justify-between text-[10.5px] font-bold text-white/95">
-                    <span>{inspectingAuction.location}</span>
-                    <span className="text-blue-100/90">صورة توضيحية عامة لساحة المزادات</span>
-                  </div>
+                    {activeInspectingAuction.location} · التاريخ:{' '}
+                    {activeInspectingAuction.auctionDate ||
+                      `${ARABIC_MONTHS[activeInspectingAuction.month - 1]} ${activeInspectingAuction.year}`}
+                  </p>
                 </div>
-              )}
-
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                  <div className="text-[11px] font-bold text-slate-500">المركبات المرتبطة</div>
-                  <div className="font-mono-num mt-1 text-base font-extrabold text-[#0A2C52]">
-                    {formatNumber(inspectedStats.totalCount)}
-                  </div>
-                  <div className="text-[10px] text-emerald-700">
-                    {formatNumber(inspectedStats.soldCount)} مبيعة · {formatNumber(inspectedStats.unsoldCount)} غير مبيعة
-                  </div>
-                </div>
-                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                  <div className="text-[11px] font-bold text-slate-500">القيمة التقديرية</div>
-                  <div dir="ltr" className="font-mono-num mt-1 text-right text-base font-extrabold text-[#0B4F93]">
-                    {formatAED(inspectedStats.totalEst)}
-                  </div>
-                  <div className="text-[10px] text-slate-500">
-                    للمبيعة: {formatAED(inspectedStats.soldEst)}
-                  </div>
-                </div>
-                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                  <div className="text-[11px] font-bold text-slate-500">إجمالي البيع</div>
-                  <div dir="ltr" className="font-mono-num mt-1 text-right text-base font-extrabold text-[#C8232C]">
-                    {formatAED(inspectedStats.totalSale)}
-                  </div>
-                  <div className="text-[10px] text-slate-500">
-                    نسبة النجاح:{' '}
-                    {inspectedStats.totalCount > 0
-                      ? `${((inspectedStats.soldCount / inspectedStats.totalCount) * 100).toFixed(2)}%`
-                      : '—'}
-                  </div>
-                </div>
-                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                  <div className="text-[11px] font-bold text-slate-500">المحصل / المتبقي</div>
-                  <div dir="ltr" className="font-mono-num mt-1 text-right text-base font-extrabold text-emerald-700">
-                    {formatAED(inspectedStats.totalCollected)}
-                  </div>
-                  <div className="text-[10px] text-[#C8232C]">
-                    المتبقي: {formatAED(inspectedStats.remaining)}
-                  </div>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                <div className="rounded-lg border border-blue-100 bg-blue-50/70 p-3">
-                  <div className="font-bold text-slate-600">
-                    حصة شركة ساعد ({inspectingAuction.saaedSharePercent}%)
-                  </div>
-                  <div dir="ltr" className="font-mono-num mt-0.5 text-right text-sm font-extrabold text-[#0A2C52]">
-                    {formatAED(inspectedStats.saaedShare)}
-                  </div>
-                </div>
-                <div className="rounded-lg border border-red-100 bg-red-50/70 p-3">
-                  <div className="font-bold text-slate-600">
-                    حصة الطرف الثالث ({inspectingAuction.thirdPartySharePercent}%)
-                  </div>
-                  <div dir="ltr" className="font-mono-num mt-0.5 text-right text-sm font-extrabold text-[#C8232C]">
-                    {formatAED(inspectedStats.thirdShare)}
-                  </div>
-                </div>
-                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-                  <div className="font-bold text-slate-600">إجمالي رسوم الخدمات المرتبطة</div>
-                  <div dir="ltr" className="font-mono-num mt-0.5 text-right text-sm font-extrabold text-[#0B4F93]">
-                    {formatAED(inspectedStats.servicesSum)}
-                  </div>
-                </div>
-              </div>
-
-              {inspectingAuction.notes && (
-                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-                  <div className="mb-1 font-extrabold text-[#0A2C52]">ملاحظات تشغيلية:</div>
-                  <div className="text-slate-700">{inspectingAuction.notes}</div>
-                </div>
-              )}
-
-              <div>
-                <div className="mb-2 font-extrabold text-[#0A2C52]">
-                  عينة من المركبات المرتبطة بهذا المزاد (أول {inspectedStats.sampleVehicles.length} من{' '}
-                  {formatNumber(inspectedStats.totalCount)})
-                </div>
-                <div className="overflow-x-auto rounded-lg border border-slate-200">
-                  <table className="w-full text-right text-[11px]">
-                    <thead>
-                      <tr className="bg-slate-100 text-slate-700">
-                        <th className="px-2.5 py-1.5">رقم اللوت</th>
-                        <th className="px-2.5 py-1.5">المركبة</th>
-                        <th className="px-2.5 py-1.5">التقديرية</th>
-                        <th className="px-2.5 py-1.5">سعر البيع</th>
-                        <th className="px-2.5 py-1.5">المحصل</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {inspectedStats.sampleVehicles.map((v) => (
-                        <tr key={v.id}>
-                          <td className="font-mono-num px-2.5 py-1.5 font-bold text-[#0B4F93]">{v.lotNumber}</td>
-                          <td className="px-2.5 py-1.5 font-bold">{v.make} {v.model} ({v.modelYear})</td>
-                          <td dir="ltr" className="font-mono-num px-2.5 py-1.5 text-right">{formatAED(v.estimatedValue)}</td>
-                          <td dir="ltr" className="font-mono-num px-2.5 py-1.5 text-right font-bold text-[#C8232C]">{formatAED(v.salePrice)}</td>
-                          <td dir="ltr" className="font-mono-num px-2.5 py-1.5 text-right font-bold text-emerald-700">{formatAED(v.collectedAmount)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-
-              <div className="flex justify-end gap-2 border-t border-slate-100 pt-3">
                 <button
                   type="button"
                   onClick={() => setInspectingAuction(null)}
-                  className="rounded-lg border border-slate-300 px-4 py-2 font-bold text-slate-700 hover:bg-slate-50"
+                  aria-label="إغلاق نافذة تفاصيل المزاد"
+                  className="rounded-lg p-1 text-white/80 transition hover:bg-white/15 hover:text-white"
                 >
-                  إغلاق
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    onSelectAuctionFilter(inspectingAuction.id);
-                    setInspectingAuction(null);
-                  }}
-                  className="rounded-lg bg-[#0B4F93] px-4 py-2 font-bold text-white hover:bg-[#083c72]"
-                >
-                  تصفية لوحة المعلومات على هذا المزاد
+                  <X className="h-4 w-4" />
                 </button>
               </div>
+
+              <div className="flex-1 space-y-4 overflow-y-auto overscroll-contain p-5 text-xs">
+                {!modalBannerFailed && (
+                  <div className="relative h-24 w-full overflow-hidden rounded-xl border border-slate-200 bg-[#041838]">
+                    <img
+                      src={auctionRegistryBannerImg}
+                      alt="صورة توضيحية عامة لساحة مزادات المركبات"
+                      referrerPolicy="no-referrer"
+                      onError={() => setModalBannerFailed(true)}
+                      className="h-full w-full object-cover object-center opacity-85 select-none"
+                    />
+                    <div
+                      aria-hidden="true"
+                      className="pointer-events-none absolute inset-0"
+                      style={{
+                        background:
+                          'linear-gradient(90deg, rgba(4,24,56,0.72) 0%, rgba(4,24,56,0.18) 55%, rgba(4,24,56,0.76) 100%)',
+                      }}
+                    />
+                    <div className="pointer-events-none absolute inset-x-3 bottom-2 flex items-center justify-between text-[10.5px] font-bold text-white/95">
+                      <span>{activeInspectingAuction.location}</span>
+                      <span className="text-blue-100/90">صورة توضيحية عامة لساحة المزادات</span>
+                    </div>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                    <div className="text-[11px] font-bold text-slate-500">المركبات المرتبطة</div>
+                    <div className="font-mono-num mt-1 text-base font-extrabold text-[#0A2C52]">
+                      {formatNumber(inspectedStats.totalCount)}
+                    </div>
+                    <div className="text-[10px] text-emerald-700">
+                      {formatNumber(inspectedStats.soldCount)} مبيعة · {formatNumber(inspectedStats.unsoldCount)} غير مبيعة
+                    </div>
+                  </div>
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                    <div className="text-[11px] font-bold text-slate-500">القيمة التقديرية</div>
+                    <div dir="ltr" className="font-mono-num mt-1 text-right text-base font-extrabold text-[#0B4F93]">
+                      {formatAED(inspectedStats.totalEst)}
+                    </div>
+                    <div className="text-[10px] text-slate-500">
+                      للمبيعة: {formatAED(inspectedStats.soldEst)}
+                    </div>
+                  </div>
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                    <div className="text-[11px] font-bold text-slate-500">إجمالي البيع</div>
+                    <div dir="ltr" className="font-mono-num mt-1 text-right text-base font-extrabold text-[#C8232C]">
+                      {formatAED(inspectedStats.totalSale)}
+                    </div>
+                    <div className="text-[10px] text-slate-500">
+                      نسبة النجاح:{' '}
+                      {inspectedStats.totalCount > 0
+                        ? `${((inspectedStats.soldCount / inspectedStats.totalCount) * 100).toFixed(2)}%`
+                        : '—'}
+                    </div>
+                  </div>
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                    <div className="text-[11px] font-bold text-slate-500">المحصل / المتبقي</div>
+                    <div dir="ltr" className="font-mono-num mt-1 text-right text-base font-extrabold text-emerald-700">
+                      {formatAED(inspectedStats.totalCollected)}
+                    </div>
+                    <div className="text-[10px] text-[#C8232C]">
+                      المتبقي: {formatAED(inspectedStats.remaining)}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                  <div className="rounded-lg border border-blue-100 bg-blue-50/70 p-3">
+                    <div className="font-bold text-slate-600">
+                      حصة شركة ساعد ({activeInspectingAuction.saaedSharePercent}%)
+                    </div>
+                    <div dir="ltr" className="font-mono-num mt-0.5 text-right text-sm font-extrabold text-[#0A2C52]">
+                      {formatAED(inspectedStats.saaedShare)}
+                    </div>
+                  </div>
+                  <div className="rounded-lg border border-red-100 bg-red-50/70 p-3">
+                    <div className="font-bold text-slate-600">
+                      حصة الطرف الثالث ({activeInspectingAuction.thirdPartySharePercent}%)
+                    </div>
+                    <div dir="ltr" className="font-mono-num mt-0.5 text-right text-sm font-extrabold text-[#C8232C]">
+                      {formatAED(inspectedStats.thirdShare)}
+                    </div>
+                  </div>
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                    <div className="font-bold text-slate-600">إجمالي رسوم الخدمات المرتبطة</div>
+                    <div dir="ltr" className="font-mono-num mt-0.5 text-right text-sm font-extrabold text-[#0B4F93]">
+                      {formatAED(inspectedStats.servicesSum)}
+                    </div>
+                  </div>
+                </div>
+
+                {activeInspectingAuction.notes && (
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                    <div className="mb-1 font-extrabold text-[#0A2C52]">ملاحظات تشغيلية:</div>
+                    <div className="text-slate-700">{activeInspectingAuction.notes}</div>
+                  </div>
+                )}
+
+                {/* Complete Linked Vehicles Section with Independent Vertical Scrollbar */}
+                <div className="space-y-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <span className="font-extrabold text-[#0A2C52]">
+                        جميع المركبات المرتبطة بهذا المزاد ({formatNumber(inspectedStats.totalCount)} مركبة)
+                      </span>
+                      {modalVehicleSearch.trim() !== '' && (
+                        <span className="rounded-md border border-blue-200 bg-blue-50 px-2 py-0.5 font-mono-num text-[10.5px] font-bold text-[#0B4F93]">
+                          نتائج البحث: {formatNumber(filteredModalVehicles.length)} من{' '}
+                          {formatNumber(inspectedStats.totalCount)}
+                        </span>
+                      )}
+                    </div>
+
+                    {inspectedStats.totalCount > 0 && (
+                      <div className="flex items-center gap-2">
+                        {tableScrollTop > 180 && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (vehiclesScrollRef.current) {
+                                vehiclesScrollRef.current.scrollTo({ top: 0, behavior: 'smooth' });
+                              }
+                              setTableScrollTop(0);
+                            }}
+                            title="العودة إلى أعلى قائمة المركبات"
+                            className="inline-flex items-center gap-1 rounded-md border border-blue-200 bg-blue-50/90 px-2 py-1 text-[10.5px] font-bold text-[#0B4F93] transition hover:bg-blue-100"
+                          >
+                            <ArrowUp className="h-3 w-3" />
+                            <span>أعلى القائمة</span>
+                          </button>
+                        )}
+                        <div className="relative">
+                          <Search className="pointer-events-none absolute right-2 top-1.5 h-3.5 w-3.5 text-slate-400" />
+                          <input
+                            type="text"
+                            value={modalVehicleSearch}
+                            onChange={(e) => {
+                              setModalVehicleSearch(e.target.value);
+                              setTableScrollTop(0);
+                              if (vehiclesScrollRef.current) {
+                                vehiclesScrollRef.current.scrollTop = 0;
+                              }
+                            }}
+                            placeholder="بحث برقم اللوت أو المركبة أو السنة..."
+                            aria-label="بحث داخل مركبات المزاد"
+                            className="w-52 rounded-lg border border-slate-200 bg-slate-50/90 py-1 pr-7 pl-6 text-[11px] font-semibold text-slate-800 placeholder:text-slate-400 focus:border-[#0B4F93] focus:bg-white focus:outline-none"
+                          />
+                          {modalVehicleSearch && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setModalVehicleSearch('');
+                                setTableScrollTop(0);
+                                if (vehiclesScrollRef.current) {
+                                  vehiclesScrollRef.current.scrollTop = 0;
+                                }
+                              }}
+                              aria-label="مسح البحث"
+                              className="absolute left-1.5 top-1.5 rounded text-slate-400 hover:text-slate-700"
+                            >
+                              <X className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  <div
+                    ref={vehiclesScrollRef}
+                    onScroll={(e) => setTableScrollTop(e.currentTarget.scrollTop)}
+                    className="saaed-auction-vehicles-scroll rounded-lg border border-slate-200 bg-white"
+                  >
+                    <table className="w-full min-w-[540px] border-collapse text-right text-[11px]">
+                      <thead>
+                        <tr className="bg-[#edf3fa] font-extrabold text-[#0A2C52]">
+                          <th className="whitespace-nowrap px-2.5 py-2">رقم اللوت</th>
+                          <th className="whitespace-nowrap px-2.5 py-2">المركبة</th>
+                          <th className="whitespace-nowrap px-2.5 py-2">التقديرية</th>
+                          <th className="whitespace-nowrap px-2.5 py-2">سعر البيع</th>
+                          <th className="whitespace-nowrap px-2.5 py-2">المحصل</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {inspectedStats.totalCount === 0 ? (
+                          <tr>
+                            <td colSpan={5} className="py-8 text-center font-semibold text-slate-400">
+                              لا توجد مركبات مرتبطة بهذا المزاد حالياً.
+                            </td>
+                          </tr>
+                        ) : filteredModalVehicles.length === 0 ? (
+                          <tr>
+                            <td colSpan={5} className="py-8 text-center font-semibold text-slate-400">
+                              لا توجد مركبات مطابقة لعبارة البحث داخل هذا المزاد.
+                            </td>
+                          </tr>
+                        ) : (
+                          <>
+                            {virtualWindow.topSpacerHeight > 0 && (
+                              <tr
+                                aria-hidden="true"
+                                style={{ height: `${virtualWindow.topSpacerHeight}px` }}
+                              >
+                                <td colSpan={5} className="border-0 p-0" />
+                              </tr>
+                            )}
+                            {virtualWindow.visibleRows.map((v, localIdx) => {
+                              const absoluteIdx = virtualWindow.startIndex + localIdx;
+                              const rowBg =
+                                absoluteIdx % 2 === 0 ? 'bg-white' : 'bg-[#f6f9fe]';
+                              return (
+                                <tr
+                                  key={v.id}
+                                  className={`h-9 transition-colors hover:bg-blue-50/70 ${rowBg}`}
+                                >
+                                  <td className="font-mono-num tabular-nums whitespace-nowrap px-2.5 py-1.5 font-bold text-[#0B4F93]">
+                                    {v.lotNumber}
+                                  </td>
+                                  <td className="whitespace-nowrap px-2.5 py-1.5 font-bold text-slate-900">
+                                    {v.make} {v.model} ({v.modelYear})
+                                  </td>
+                                  <td
+                                    dir="ltr"
+                                    className="font-mono-num tabular-nums whitespace-nowrap px-2.5 py-1.5 text-right text-slate-800"
+                                  >
+                                    {formatAED(v.estimatedValue)}
+                                  </td>
+                                  <td
+                                    dir="ltr"
+                                    className="font-mono-num tabular-nums whitespace-nowrap px-2.5 py-1.5 text-right font-bold text-[#C8232C]"
+                                  >
+                                    {formatAED(v.salePrice)}
+                                  </td>
+                                  <td
+                                    dir="ltr"
+                                    className="font-mono-num tabular-nums whitespace-nowrap px-2.5 py-1.5 text-right font-bold text-emerald-700"
+                                  >
+                                    {formatAED(v.collectedAmount)}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                            {virtualWindow.bottomSpacerHeight > 0 && (
+                              <tr
+                                aria-hidden="true"
+                                style={{ height: `${virtualWindow.bottomSpacerHeight}px` }}
+                              >
+                                <td colSpan={5} className="border-0 p-0" />
+                              </tr>
+                            )}
+                          </>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <div className="flex justify-end gap-2 border-t border-slate-100 pt-3">
+                  <button
+                    type="button"
+                    onClick={() => setInspectingAuction(null)}
+                    className="rounded-lg border border-slate-300 px-4 py-2 font-bold text-slate-700 hover:bg-slate-50"
+                  >
+                    إغلاق
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onSelectAuctionFilter(activeInspectingAuction.id);
+                      setInspectingAuction(null);
+                    }}
+                    className="rounded-lg bg-[#0B4F93] px-4 py-2 font-bold text-white hover:bg-[#083c72]"
+                  >
+                    تصفية لوحة المعلومات على هذا المزاد
+                  </button>
+                </div>
+              </div>
             </div>
-          </div>
-        </div>,
-        document.body
-      )}
+          </div>,
+          document.body
+        )}
     </div>
   );
 };
@@ -1066,6 +1260,7 @@ export const VehiclesLedgerView: React.FC<VehiclesLedgerViewProps> = ({
   const [page, setPage] = useState(1);
   const [headerThumbFailed, setHeaderThumbFailed] = useState(false);
   const [editingSaleDateVehicle, setEditingSaleDateVehicle] = useState<Vehicle | null>(null);
+  const [exportingExcel, setExportingExcel] = useState(false);
 
   const auctionsById = useMemo(() => buildAuctionLookupMap(auctions), [auctions]);
 
@@ -1182,19 +1377,41 @@ export const VehiclesLedgerView: React.FC<VehiclesLedgerViewProps> = ({
 
           <button
             type="button"
-            disabled={visible.length === 0}
-            onClick={() =>
-              exportVehiclesToXlsx(
-                visible,
-                `SAAED_Vehicles_${filter.year}_${filter.month}`,
-                isDemoMode,
-                auctionsById
-              )
-            }
+            disabled={visible.length === 0 || exportingExcel}
+            onClick={async () => {
+              if (exportingExcel || visible.length === 0) return;
+              setExportingExcel(true);
+              try {
+                const report = await exportVehiclesToXlsx(
+                  visible,
+                  `SAAED_Vehicles_${filter.year}_${filter.month}`,
+                  isDemoMode,
+                  auctionsById
+                );
+                if (report) {
+                  showToast({
+                    variant: 'success',
+                    title: 'تم تصدير تقرير Excel التنفيذي بنجاح',
+                    description: `تم استخراج ${formatNumber(report.vehicleRowCount)} سجل مركبة بـ ${report.columnCount} عموداً مع الملخص التنفيذي والشعار المضمّن.`,
+                  });
+                }
+              } catch (err) {
+                showToast({
+                  variant: 'error',
+                  title: 'تعذر تصدير ملف Excel',
+                  description:
+                    err instanceof Error
+                      ? err.message
+                      : 'حدث خطأ أثناء إنشاء ملف التقرير. يرجى المحاولة مرة أخرى.',
+                });
+              } finally {
+                setExportingExcel(false);
+              }
+            }}
             className="flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-800 hover:bg-slate-50 disabled:opacity-50"
           >
             <Download className="h-3.5 w-3.5 text-emerald-700" />
-            <span>تصدير Excel</span>
+            <span>{exportingExcel ? 'جاري تجهيز Excel...' : 'تصدير Excel'}</span>
           </button>
 
           {canEdit && (
