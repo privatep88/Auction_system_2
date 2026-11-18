@@ -88,8 +88,8 @@ export function getRtlScrollMetrics(
   scrollLeft: number,
   scrollType: RtlScrollType = 'negative'
 ): RtlScrollMetrics {
-  const maxScroll = Math.max(0, Math.round(scrollWidth - clientWidth));
-  // 2px tolerance avoids false positives from subpixel rounding
+  const maxScroll = Math.max(0, scrollWidth - clientWidth);
+  // 2px tolerance avoids false positives from subpixel rounding on high-DPI / Android displays
   const hasOverflow = maxScroll > 2;
   if (!hasOverflow) {
     return { maxScroll: 0, hasOverflow: false, progress: 0 };
@@ -188,7 +188,7 @@ export function computeFloatingScrollbarGeometry({
   footerTop = null,
   barHeight = 36,
   safeBottomGap = 14,
-  headerGuardHeight = 96,
+  headerGuardHeight = 56,
 }: ComputeFloatingGeometryInput): FloatingScrollbarGeometry {
   if (!hasOverflow || isModalOpen || !containerRect || viewportWidth <= 0 || viewportHeight <= 0) {
     return { mode: 'hidden', left: 0, width: 0, bottom: safeBottomGap };
@@ -227,9 +227,9 @@ export function computeFloatingScrollbarGeometry({
   const footerReserved = Math.max(0, viewportHeight - safeViewportBottom);
   const bottom = Math.max(safeBottomGap, footerReserved + safeBottomGap);
 
-  // Ensure the floating bar doesn't climb above the table header
+  // Ensure the floating bar doesn't climb over the table header row
   const barTopInViewport = viewportHeight - bottom - barHeight;
-  if (barTopInViewport < containerRect.top + 48) {
+  if (barTopInViewport < containerRect.top + 40) {
     return { mode: 'docked', left: visibleLeft, width: clippedWidth, bottom: safeBottomGap };
   }
 

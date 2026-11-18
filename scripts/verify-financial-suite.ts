@@ -414,11 +414,26 @@ async function verifyEnterpriseExcelExport() {
     viewportHeight: 667,
   });
 
+  const mobileFractionalDpiEnd = getRtlScrollMetrics(1220.4, 375.2, -845.2, 'negative');
+  const laptopTopEntryFloating = computeFloatingScrollbarGeometry({
+    hasOverflow: true,
+    isModalOpen: false,
+    containerRect: { top: 670, bottom: 2670, left: 16, right: 1036, width: 1020, height: 2000 },
+    dockRect: { top: 2670, bottom: 2710, left: 16, right: 1036, width: 1020, height: 40 },
+    viewportWidth: 1366,
+    viewportHeight: 768,
+    footerTop: 2800,
+    barHeight: 38,
+    safeBottomGap: 14,
+    headerGuardHeight: 56,
+  });
+
   const smartScrollOk =
     !fitAllDesktop.hasOverflow &&
     smallLaptopStart.hasOverflow &&
     smallLaptopStart.progress === 0 &&
     smallLaptopEnd.progress === 1 &&
+    Math.abs(mobileFractionalDpiEnd.progress - 1) < 0.001 &&
     Math.abs(legacyWebkitMid.progress - 0.5) < 0.001 &&
     Math.abs(legacyEdgeMid.progress - 0.5) < 0.001 &&
     negBack === -150 &&
@@ -429,6 +444,7 @@ async function verifyEnterpriseExcelExport() {
     midTableFloating.mode === 'floating' &&
     midTableFloating.left === 16 &&
     midTableFloating.width === 920 &&
+    laptopTopEntryFloating.mode === 'floating' &&
     bottomReachedDocked.mode === 'docked' &&
     footerCollisionAvoided.mode === 'floating' &&
     footerCollisionAvoided.bottom >= 74 &&

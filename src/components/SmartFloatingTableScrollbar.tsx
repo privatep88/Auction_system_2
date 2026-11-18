@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ChevronLeft, ChevronRight, MoveHorizontal } from 'lucide-react';
 import {
   clampNumber,
@@ -65,16 +65,19 @@ export const SmartFloatingTableScrollbar: React.FC<SmartFloatingTableScrollbarPr
   const isContainerIntersectingRef = useRef(true);
   const rafSyncIdRef = useRef<number | null>(null);
   const hasRestoredOnMountRef = useRef(false);
+  const smoothTargetRef = useRef<{ progress: number; expiresAt: number } | null>(null);
   const dragStateRef = useRef<{
     active: boolean;
     startClientX: number;
     startProgress: number;
     pointerId: number | null;
+    captureElement: HTMLElement | null;
   }>({
     active: false,
     startClientX: 0,
     startProgress: 0,
     pointerId: null,
+    captureElement: null,
   });
 
   const effectiveModalOpen = isExternalModalOpen || domDialogOpen;
@@ -173,18 +176,20 @@ export const SmartFloatingTableScrollbar: React.FC<SmartFloatingTableScrollbarPr
 
     const footerEl = document.querySelector('footer.no-print');
     const footerTop = footerEl ? footerEl.getBoundingClientRect().top : null;
+    const viewportWidth = document.documentElement?.clientWidth || window.innerWidth;
+    const viewportHeight = document.documentElement?.clientHeight || window.innerHeight;
 
     const geometry = computeFloatingScrollbarGeometry({
       hasOverflow: metrics.hasOverflow && isContainerIntersectingRef.current,
       isModalOpen: effectiveModalRef.current,
       containerRect: toRectBox(container.getBoundingClientRect()),
       dockRect: dockRef.current ? toRectBox(dockRef.current.getBoundingClientRect()) : null,
-      viewportWidth: window.innerWidth,
-      viewportHeight: window.innerHeight,
+      viewportWidth,
+      viewportHeight,
       footerTop,
       barHeight: 38,
       safeBottomGap: 14,
-      headerGuardHeight: 92,
+      headerGuardHeight: 56,
     });
 
     setBarMode((prev) => (prev === geometry.mode ? prev : geometry.mode));
@@ -229,6 +234,14 @@ export const SmartFloatingTableScrollbar: React.FC<SmartFloatingTableScrollbarPr
     });
   }, [syncVisualsNow]);
 
+  const getStepBaseProgress = useCallback(() => {
+    const pending = smoothTargetRef.current;
+    if (pending && Date.now() < pending.expiresAt) {
+      return pending.progress;
+    }
+    return currentProgressRef.current;
+  }, []);
+
   const applyProgressToContainer = useCallback(
     (nextProgress: number, smooth = false) => {
       const container = scrollContainerRef.current;
@@ -243,8 +256,10 @@ export const SmartFloatingTableScrollbar: React.FC<SmartFloatingTableScrollbarPr
       SESSION_SCROLL_PROGRESS.set(storageKey, clamped);
 
       if (smooth && typeof container.scrollTo === 'function') {
+        smoothTargetRef.current = { progress: clamped, expiresAt: Date.now() + 450 };
         container.scrollTo({ left: targetScrollLeft, behavior: 'smooth' });
       } else {
+        smoothTargetRef.current = null;
         container.scrollLeft = targetScrollLeft;
       }
       scheduleSync();
@@ -309,12 +324,12 @@ export const SmartFloatingTableScrollbar: React.FC<SmartFloatingTableScrollbarPr
     };
   }, [scheduleSync, scrollContainerRef, tableRef]);
 
-  // Re-sync immediately whenever modal open state or overflow state changes
-  useEffect(() => {
+  // Re-sync synchronously before paint whenever modal open state, overflow, or dock mode changes
+  useLayoutEffect(() => {
     syncVisualsNow();
   }, [effectiveModalOpen, hasOverflow, barMode, syncVisualsNow]);
 
-  // Global pointer drag handling for smooth 60fps mouse & touch scrubbing
+  // Global pointer drag handling for smooth 60fps mouse & touch scrubbing (desktop + Android)
   useEffect(() => {
     const handlePointerMove = (e: PointerEvent) => {
       const drag = dragStateRef.current;
@@ -334,8 +349,18 @@ export const SmartFloatingTableScrollbar: React.FC<SmartFloatingTableScrollbarPr
       const drag = dragStateRef.current;
       if (!drag.active) return;
       if (drag.pointerId !== null && e.pointerId !== drag.pointerId) return;
+      if (drag.captureElement && drag.pointerId !== null) {
+        try {
+          if (drag.captureElement.hasPointerCapture?.(drag.pointerId)) {
+            drag.captureElement.releasePointerCapture(drag.pointerId);
+          }
+        } catch {
+          // Ignore release failures when element unmounted
+        }
+      }
       drag.active = false;
       drag.pointerId = null;
+      drag.captureElement = null;
       setIsDragging(false);
     };
 
@@ -356,11 +381,18 @@ export const SmartFloatingTableScrollbar: React.FC<SmartFloatingTableScrollbarPr
     e.stopPropagation();
     markHintSeen();
 
+    try {
+      e.currentTarget.setPointerCapture?.(e.pointerId);
+    } catch {
+      // Ignore synthetic pointer events without active capture
+    }
+
     dragStateRef.current = {
       active: true,
       startClientX: e.clientX,
       startProgress: currentProgressRef.current,
       pointerId: e.pointerId,
+      captureElement: e.currentTarget,
     };
     setIsDragging(true);
   };
@@ -384,12 +416,19 @@ export const SmartFloatingTableScrollbar: React.FC<SmartFloatingTableScrollbarPr
 
     applyProgressToContainer(nextProgress, false);
 
+    try {
+      e.currentTarget.setPointerCapture?.(e.pointerId);
+    } catch {
+      // Ignore synthetic pointer events without active capture
+    }
+
     // Allow immediate continuous drag right after clicking anywhere on the track
     dragStateRef.current = {
       active: true,
       startClientX: e.clientX,
       startProgress: nextProgress,
       pointerId: e.pointerId,
+      captureElement: e.currentTarget,
     };
     setIsDragging(true);
   };
@@ -400,27 +439,28 @@ export const SmartFloatingTableScrollbar: React.FC<SmartFloatingTableScrollbarPr
 
     const smallStep = clampNumber((container.clientWidth * 0.18) / maxScrollRef.current, 0.05, 0.3);
     const largeStep = clampNumber((container.clientWidth * 0.75) / maxScrollRef.current, 0.15, 0.85);
+    const base = getStepBaseProgress();
 
     switch (e.key) {
       case 'ArrowLeft':
         e.preventDefault();
         markHintSeen();
-        applyProgressToContainer(currentProgressRef.current + smallStep, true);
+        applyProgressToContainer(base + smallStep, true);
         break;
       case 'ArrowRight':
         e.preventDefault();
         markHintSeen();
-        applyProgressToContainer(currentProgressRef.current - smallStep, true);
+        applyProgressToContainer(base - smallStep, true);
         break;
       case 'PageDown':
         e.preventDefault();
         markHintSeen();
-        applyProgressToContainer(currentProgressRef.current + largeStep, true);
+        applyProgressToContainer(base + largeStep, true);
         break;
       case 'PageUp':
         e.preventDefault();
         markHintSeen();
-        applyProgressToContainer(currentProgressRef.current - largeStep, true);
+        applyProgressToContainer(base - largeStep, true);
         break;
       case 'Home':
         e.preventDefault();
@@ -481,7 +521,7 @@ export const SmartFloatingTableScrollbar: React.FC<SmartFloatingTableScrollbarPr
             type="button"
             onClick={() => {
               markHintSeen();
-              applyProgressToContainer(currentProgressRef.current - 0.22, true);
+              applyProgressToContainer(getStepBaseProgress() - 0.22, true);
             }}
             title="تمرير لليمين (بداية الجدول)"
             aria-label="تمرير أفقي لليمين نحو أعمدة اللوت والمزاد"
@@ -523,7 +563,7 @@ export const SmartFloatingTableScrollbar: React.FC<SmartFloatingTableScrollbarPr
             type="button"
             onClick={() => {
               markHintSeen();
-              applyProgressToContainer(currentProgressRef.current + 0.22, true);
+              applyProgressToContainer(getStepBaseProgress() + 0.22, true);
             }}
             title="تمرير لليسار (بقية الأعمدة)"
             aria-label="تمرير أفقي لليسار نحو أعمدة المبالغ والإجراءات"
