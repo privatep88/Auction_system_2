@@ -69,6 +69,7 @@ import { AuctionRegistryBanner } from '../AuctionRegistryBanner';
 import { FinancialCollectionsBanner } from '../FinancialCollectionsBanner';
 import { PaymentDatePickerModal } from '../PaymentDatePickerModal';
 import { SaleDatePickerModal } from '../SaleDatePickerModal';
+import { SmartFloatingTableScrollbar } from '../SmartFloatingTableScrollbar';
 import { useSmartDialog } from '../SmartDialogSystem';
 import { VehicleInventoryBanner } from '../VehicleInventoryBanner';
 
@@ -1261,6 +1262,8 @@ export const VehiclesLedgerView: React.FC<VehiclesLedgerViewProps> = ({
   const [headerThumbFailed, setHeaderThumbFailed] = useState(false);
   const [editingSaleDateVehicle, setEditingSaleDateVehicle] = useState<Vehicle | null>(null);
   const [exportingExcel, setExportingExcel] = useState(false);
+  const tableScrollRef = useRef<HTMLDivElement | null>(null);
+  const vehiclesTableRef = useRef<HTMLTableElement | null>(null);
 
   const auctionsById = useMemo(() => buildAuctionLookupMap(auctions), [auctions]);
 
@@ -1447,8 +1450,12 @@ export const VehiclesLedgerView: React.FC<VehiclesLedgerViewProps> = ({
 
       {/* Enhanced High-Performance Vehicle Inventory Table (All Columns Preserved) */}
       <div className="saaed-card overflow-hidden rounded-xl">
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[1220px] text-right text-xs">
+        <div ref={tableScrollRef} className="saaed-smart-scroll-host">
+          <table
+            id="saaed-vehicles-ledger-table"
+            ref={vehiclesTableRef}
+            className="w-full min-w-[1220px] text-right text-xs"
+          >
             <thead>
               <tr className="saaed-card-header whitespace-nowrap text-white">
                 <th className="px-3 py-3 font-extrabold">المعرف / اللوت</th>
@@ -1635,6 +1642,15 @@ export const VehiclesLedgerView: React.FC<VehiclesLedgerViewProps> = ({
             </tbody>
           </table>
         </div>
+
+        <SmartFloatingTableScrollbar
+          scrollContainerRef={tableScrollRef}
+          tableRef={vehiclesTableRef}
+          tableId="saaed-vehicles-ledger-table"
+          isExternalModalOpen={Boolean(editingSaleDateVehicle)}
+          storageKey="saaed_vehicles_ledger_scroll_v1"
+          ariaLabel="شريط التمرير الأفقي الذكي لجدول المركبات المعروضة والمبيعة"
+        />
 
         {totalPages > 1 && (
           <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-200 bg-slate-50 px-4 py-2.5 text-xs">

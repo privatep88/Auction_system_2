@@ -197,6 +197,24 @@
   box-shadow: 0 1px 0 #cbd5e1;
 }
 
+/* SAAED Smart Floating Horizontal Scrollbar Host (suppress duplicate native chrome while preserving native panning) */
+.saaed-smart-scroll-host {
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.saaed-smart-scroll-host[data-smart-scroll="active"] {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.saaed-smart-scroll-host[data-smart-scroll="active"]::-webkit-scrollbar {
+  height: 0;
+  display: none;
+}
+
 /* A4 Preview Sheet Styling (Screen) */
 .saaed-a4-sheet {
   box-sizing: border-box;

@@ -16,6 +16,12 @@ import {
   runFinancialValidationSuite,
 } from '../src/utils/demoDataGenerator';
 import {
+  computeFloatingScrollbarGeometry,
+  computeThumbLayout,
+  getRtlScrollMetrics,
+  progressToRtlScrollLeft,
+} from '../src/utils/rtlScroll';
+import {
   buildCalendarMonthGrid,
   formatIsoDateParts,
   isValidIsoCalendarDate,
@@ -346,12 +352,114 @@ async function verifyEnterpriseExcelExport() {
     });
   }
 
+  // T18: Smart Floating Horizontal Scrollbar (RTL coordinates, overflow visibility, footer & modal isolation)
+  const fitAllDesktop = getRtlScrollMetrics(1220, 1340, 0, 'negative');
+  const smallLaptopStart = getRtlScrollMetrics(1220, 920, 0, 'negative');
+  const smallLaptopEnd = getRtlScrollMetrics(1220, 920, -300, 'negative');
+  const legacyWebkitMid = getRtlScrollMetrics(1220, 920, 150, 'default');
+  const legacyEdgeMid = getRtlScrollMetrics(1220, 920, 150, 'reverse');
+
+  const negBack = progressToRtlScrollLeft(0.5, 300, 'negative');
+  const defBack = progressToRtlScrollLeft(0.5, 300, 'default');
+  const revBack = progressToRtlScrollLeft(0.5, 300, 'reverse');
+
+  const thumbAtStart = computeThumbLayout(800, 920, 1220, 0);
+  const thumbAtEnd = computeThumbLayout(800, 920, 1220, 1);
+
+  const midTableFloating = computeFloatingScrollbarGeometry({
+    hasOverflow: true,
+    isModalOpen: false,
+    containerRect: { top: -400, bottom: 1600, left: 16, right: 936, width: 920, height: 2000 },
+    dockRect: { top: 1600, bottom: 1640, left: 16, right: 936, width: 920, height: 40 },
+    viewportWidth: 1280,
+    viewportHeight: 800,
+    footerTop: 1850,
+  });
+
+  const bottomReachedDocked = computeFloatingScrollbarGeometry({
+    hasOverflow: true,
+    isModalOpen: false,
+    containerRect: { top: -1200, bottom: 680, left: 16, right: 936, width: 920, height: 1880 },
+    dockRect: { top: 680, bottom: 720, left: 16, right: 936, width: 920, height: 40 },
+    viewportWidth: 1280,
+    viewportHeight: 800,
+    footerTop: 742,
+  });
+
+  const footerCollisionAvoided = computeFloatingScrollbarGeometry({
+    hasOverflow: true,
+    isModalOpen: false,
+    containerRect: { top: -500, bottom: 900, left: 16, right: 936, width: 920, height: 1400 },
+    dockRect: { top: 900, bottom: 940, left: 16, right: 936, width: 920, height: 40 },
+    viewportWidth: 1280,
+    viewportHeight: 800,
+    footerTop: 740,
+  });
+
+  const modalOpenHidden = computeFloatingScrollbarGeometry({
+    hasOverflow: true,
+    isModalOpen: true,
+    containerRect: { top: 120, bottom: 1600, left: 16, right: 936, width: 920, height: 1480 },
+    dockRect: { top: 1600, bottom: 1640, left: 16, right: 936, width: 920, height: 40 },
+    viewportWidth: 1280,
+    viewportHeight: 800,
+  });
+
+  const mobileFloating = computeFloatingScrollbarGeometry({
+    hasOverflow: true,
+    isModalOpen: false,
+    containerRect: { top: 80, bottom: 1800, left: 16, right: 359, width: 343, height: 1720 },
+    dockRect: { top: 1800, bottom: 1840, left: 16, right: 359, width: 343, height: 40 },
+    viewportWidth: 375,
+    viewportHeight: 667,
+  });
+
+  const smartScrollOk =
+    !fitAllDesktop.hasOverflow &&
+    smallLaptopStart.hasOverflow &&
+    smallLaptopStart.progress === 0 &&
+    smallLaptopEnd.progress === 1 &&
+    Math.abs(legacyWebkitMid.progress - 0.5) < 0.001 &&
+    Math.abs(legacyEdgeMid.progress - 0.5) < 0.001 &&
+    negBack === -150 &&
+    defBack === 150 &&
+    revBack === 150 &&
+    Math.abs(thumbAtStart.leftPx - thumbAtStart.maxTravel) < 0.01 &&
+    thumbAtEnd.leftPx === 0 &&
+    midTableFloating.mode === 'floating' &&
+    midTableFloating.left === 16 &&
+    midTableFloating.width === 920 &&
+    bottomReachedDocked.mode === 'docked' &&
+    footerCollisionAvoided.mode === 'floating' &&
+    footerCollisionAvoided.bottom >= 74 &&
+    modalOpenHidden.mode === 'hidden' &&
+    mobileFloating.mode === 'floating' &&
+    mobileFloating.width === 343;
+
+  if (smartScrollOk) {
+    console.log(
+      '[PASS] T18: التحقق من شريط التمرير الأفقي الذكي العائم (RTL Chrome/WebKit/Edge، التثبيت، تجنب الفوتر والنوافذ، الجوال)'
+    );
+  } else {
+    failedCount += 1;
+    console.error('[FAIL] T18: Smart floating horizontal scrollbar geometry/RTL check failed:', {
+      fitAllDesktop,
+      smallLaptopStart,
+      smallLaptopEnd,
+      midTableFloating,
+      bottomReachedDocked,
+      footerCollisionAvoided,
+      modalOpenHidden,
+      mobileFloating,
+    });
+  }
+
   if (failedCount > 0) {
     console.error(`\nFinancial validation failed: ${failedCount} test(s) did not pass.`);
     process.exit(1);
   }
 
-  console.log(`\nAll ${results.length + 5} financial & operational integrity tests passed.`);
+  console.log(`\nAll ${results.length + 6} financial & operational integrity tests passed.`);
 }
 
 verifyEnterpriseExcelExport().catch((err) => {
